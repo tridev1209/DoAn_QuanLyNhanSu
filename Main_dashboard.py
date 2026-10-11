@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from db_connection import get_db_connection
 from mysql.connector import Error
+from ui_icons import get_icon, icon_button, icon_label
+from user_error import show_database_error
 
 
 
@@ -40,6 +42,7 @@ class ForgotPasswordWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Khôi phục & Đổi mật khẩu")
+        self.iconphoto(False, get_icon(self, "key", "#2563eb"))
         self.geometry("400x320")
         self.resizable(False, False)
         self.transient(parent)
@@ -64,7 +67,7 @@ class ForgotPasswordWindow(tk.Toplevel):
         tk.Label(frame, text="Mật khẩu mới:", font=("Helvetica", 9, "bold"), bg="#ffffff", fg="#334155", anchor="w").pack(fill=tk.X, pady=(2, 2))
         ttk.Entry(frame, textvariable=self.var_new_pw, show="•", font=("Helvetica", 10)).pack(fill=tk.X, ipady=3, pady=(0, 15))
 
-        btn_reset = tk.Button(frame, text="CẬP NHẬT MẬT KHẨU", bg="#2563eb", fg="white", font=("Helvetica", 10, "bold"), bd=0, cursor="hand2", command=self.save_new_password_to_db)
+        btn_reset = icon_button(frame, text="CẬP NHẬT MẬT KHẨU", icon="key", bg="#2563eb", fg="white", bd=0, cursor="hand2", command=self.save_new_password_to_db)
         btn_reset.pack(fill=tk.X, ipady=6)
 
     def save_new_password_to_db(self):
@@ -91,7 +94,7 @@ class ForgotPasswordWindow(tk.Toplevel):
                 else:
                     messagebox.showerror("Lỗi", "Tên đăng nhập hoặc Email không chính xác!", parent=self)
             except Error as e:
-                messagebox.showerror("Lỗi CSDL", f"{e}", parent=self)
+                show_database_error(e, "đổi mật khẩu", parent=self)
             finally:
                 conn.close()
 
@@ -102,6 +105,7 @@ class LoginForm:
     def __init__(self, root):
         self.root = root
         self.root.title("ĐĂNG NHẬP HỆ THỐNG QUẢN LÝ NHÂN SỰ")
+        self.root.iconphoto(True, get_icon(self.root, "app", "#2563eb"))
         self.root.geometry("450x440")
         self.root.resizable(False, False)
         self.user_info = None
@@ -145,7 +149,7 @@ class LoginForm:
         btn_forgot.pack(side=tk.RIGHT)
         btn_forgot.bind("<Button-1>", lambda e: ForgotPasswordWindow(self.root))
 
-        tk.Button(main_frame, text="ĐĂNG NHẬP", font=("Helvetica", 11, "bold"), bg="#2563eb", fg="white", bd=0, cursor="hand2", command=self.handle_login).pack(fill=tk.X, ipady=6)
+        icon_button(main_frame, text="ĐĂNG NHẬP", icon="account", font=("Segoe UI", 11, "bold"), bg="#2563eb", fg="white", bd=0, cursor="hand2", command=self.handle_login).pack(fill=tk.X, ipady=6)
 
     def handle_login(self):
         username = self.var_username.get().strip()
@@ -175,7 +179,7 @@ class LoginForm:
             else:
                 messagebox.showerror("Lỗi", "Sai tên đăng nhập hoặc mật khẩu!")
         except Error as e:
-            messagebox.showerror("Lỗi", f"{e}")
+            show_database_error(e, "đăng nhập")
         finally:
             conn.close()
 
@@ -191,6 +195,7 @@ class MainDashboardApp:
         role_display = role_names.get(user_info['vai_tro'], user_info['vai_tro'])
 
         self.root.title(f"HỆ THỐNG QUẢN LÝ NHÂN SỰ - [{user_info['ho_ten']} ({role_display})]")
+        self.root.iconphoto(True, get_icon(self.root, "app", "#38bdf8"))
         self.root.geometry("1450x680")
         self.root.minsize(1000, 600)
 
@@ -213,12 +218,12 @@ class MainDashboardApp:
         top_bar = tk.Frame(self.root, bg="#0f172a", height=50)
         top_bar.pack(side=tk.TOP, fill=tk.X)
 
-        tk.Label(top_bar, text="🏢 HỆ THỐNG QUẢN LÝ NHÂN SỰ", font=("Helvetica", 13, "bold"), fg="#38bdf8", bg="#0f172a", padx=15).pack(side=tk.LEFT)
+        icon_label(top_bar, text="HỆ THỐNG QUẢN LÝ NHÂN SỰ", icon="app", font=("Segoe UI", 13, "bold"), fg="#38bdf8", bg="#0f172a", padx=15).pack(side=tk.LEFT)
 
-        user_desc = f"👤 {self.user_info['ho_ten']}  |  Quyền: {self.get_role_name(self.user_info['vai_tro'])}"
-        tk.Label(top_bar, text=user_desc, font=("Helvetica", 10, "bold"), fg="#f8fafc", bg="#0f172a").pack(side=tk.RIGHT, padx=15)
+        user_desc = f"{self.user_info['ho_ten']}  |  Quyền: {self.get_role_name(self.user_info['vai_tro'])}"
+        icon_label(top_bar, text=user_desc, icon="profile", font=("Segoe UI", 10, "bold"), fg="#f8fafc", bg="#0f172a").pack(side=tk.RIGHT, padx=15)
 
-        btn_logout = tk.Button(top_bar, text="Đăng xuất", font=("Helvetica", 9, "bold"), bg="#ef4444", fg="white", bd=0, padx=10, pady=3, cursor="hand2", command=self.logout)
+        btn_logout = icon_button(top_bar, text="Đăng xuất", icon="logout", font=("Segoe UI", 9, "bold"), bg="#ef4444", fg="white", bd=0, padx=10, pady=3, cursor="hand2", command=self.logout)
         btn_logout.pack(side=tk.RIGHT, padx=(0, 10))
 
         # --- MAIN BODY CONTAINER ---
@@ -243,31 +248,31 @@ class MainDashboardApp:
 
         # 1. QUYỀN ADMIN: Hiển thị đầy đủ tất cả chức năng (bao gồm Phòng Ban & Chức Vụ)
         if role == "Admin":
-            self.create_nav_btn("👥 Quản Lý Nhân Viên", self.show_employee_form)
-            self.create_nav_btn("🏢 Phòng Ban & Chức Vụ", self.show_department_form)
-            self.create_nav_btn("🔐 Quản Lý Tài Khoản", self.show_account_form)
-            self.create_nav_btn("💰 Bảng Tính Lương", self.show_payroll_form)
-            self.create_nav_btn("📊 Thống Kê & Báo Cáo", self.show_report_form)
-            self.create_nav_btn("👤 Hồ Sơ Cá Nhân", self.show_profile_form)
+            self.create_nav_btn("Quản Lý Nhân Viên", "employees", self.show_employee_form)
+            self.create_nav_btn("Phòng Ban & Chức Vụ", "department", self.show_department_form)
+            self.create_nav_btn("Quản Lý Tài Khoản", "account", self.show_account_form)
+            self.create_nav_btn("Bảng Tính Lương", "payroll", self.show_payroll_form)
+            self.create_nav_btn("Thống Kê & Báo Cáo", "report", self.show_report_form)
+            self.create_nav_btn("Hồ Sơ Cá Nhân", "profile", self.show_profile_form)
 
         # 2. QUYỀN TRƯỞNG PHÒNG: Ẩn nút "Phòng Ban & Chức Vụ"
         elif role == "TruongPhong":
-            self.create_nav_btn("👥 Quản Lý Nhân Viên", self.show_employee_form)
-            self.create_nav_btn("💰 Bảng Tính Lương", self.show_payroll_form)
-            self.create_nav_btn("📊 Thống Kê & Báo Cáo", self.show_report_form)
-            self.create_nav_btn("👤 Hồ Sơ Cá Nhân", self.show_profile_form)
+            self.create_nav_btn("Quản Lý Nhân Viên", "employees", self.show_employee_form)
+            self.create_nav_btn("Bảng Tính Lương", "payroll", self.show_payroll_form)
+            self.create_nav_btn("Thống Kê & Báo Cáo", "report", self.show_report_form)
+            self.create_nav_btn("Hồ Sơ Cá Nhân", "profile", self.show_profile_form)
 
         # 3. QUYỀN NHÂN VIÊN: Chỉ xem hồ sơ & phiếu lương cá nhân
         else:
-            self.create_nav_btn("👤 Hồ Sơ Cá Nhân", self.show_profile_form)
-            self.create_nav_btn("📄 Phiếu Lương Cá Nhân", self.show_payroll_form)
+            self.create_nav_btn("Hồ Sơ Cá Nhân", "profile", self.show_profile_form)
+            self.create_nav_btn("Phiếu Lương Cá Nhân", "document", self.show_payroll_form)
         
         # --- DYNAMIC CONTENT AREA RIGHT ---
         self.content_area = tk.Frame(body_container, bg="#f8fafc", padx=20, pady=15)
         self.content_area.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-    def create_nav_btn(self, text, command):
-        btn = tk.Button(self.sidebar, text=text, font=("Helvetica", 10, "bold"), fg="#e2e8f0", bg="#1e293b", activebackground="#334155", activeforeground="white", bd=0, anchor="w", padx=18, pady=12, cursor="hand2", command=command)
+    def create_nav_btn(self, text, icon, command):
+        btn = icon_button(self.sidebar, text=text, icon=icon, font=("Segoe UI", 10, "bold"), fg="#e2e8f0", bg="#1e293b", activebackground="#334155", activeforeground="white", bd=0, anchor="w", padx=18, pady=12, cursor="hand2", command=command)
         btn.pack(fill=tk.X, pady=2)
         return btn
 
@@ -316,7 +321,7 @@ class MainDashboardApp:
 
     def show_profile_form(self):
         self.clear_content()
-        tk.Label(self.content_area, text="HỒ SƠ CÁ NHÂN", font=("Helvetica", 14, "bold"), bg="#f8fafc").pack(anchor="w")
+        icon_label(self.content_area, text="HỒ SƠ CÁ NHÂN", icon="profile", icon_color="#2563eb", font=("Segoe UI", 14, "bold"), bg="#f8fafc").pack(anchor="w")
         p_card = tk.Frame(self.content_area, bg="white", padx=25, pady=25)
         p_card.pack(fill=tk.X, pady=10)
         fields = [

@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from db_connection import get_db_connection
 from mysql.connector import Error
+from ui_icons import icon_button, icon_label
+from user_error import show_database_error, show_file_error
 
 
 class StatisticsReportForm:
@@ -122,9 +124,11 @@ class StatisticsReportForm:
             highlightthickness=1,
         )
         card1.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
-        tk.Label(
+        icon_label(
             card1,
-            text="👥 TỔNG NV",
+            text="TỔNG NV",
+            icon="employees",
+            icon_color="#2563eb",
             font=("Helvetica", 9, "bold"),
             fg="#64748b",
             bg="white",
@@ -147,9 +151,11 @@ class StatisticsReportForm:
             highlightthickness=1,
         )
         card2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4)
-        tk.Label(
+        icon_label(
             card2,
-            text="🟢 ĐANG LÀM VIỆC",
+            text="ĐANG LÀM VIỆC",
+            icon="active",
+            icon_color="#16a34a",
             font=("Helvetica", 9, "bold"),
             fg="#64748b",
             bg="white",
@@ -172,9 +178,11 @@ class StatisticsReportForm:
             highlightthickness=1,
         )
         card3.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4)
-        tk.Label(
+        icon_label(
             card3,
-            text="🔴 ĐÃ NGHỈ VIỆC",
+            text="ĐÃ NGHỈ VIỆC",
+            icon="inactive",
+            icon_color="#dc2626",
             font=("Helvetica", 9, "bold"),
             fg="#64748b",
             bg="white",
@@ -197,9 +205,11 @@ class StatisticsReportForm:
             highlightthickness=1,
         )
         card4.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0))
-        tk.Label(
+        icon_label(
             card4,
-            text="💰 TỔNG QUỸ LƯƠNG",
+            text="TỔNG QUỸ LƯƠNG",
+            icon="payroll",
+            icon_color="#0284c7",
             font=("Helvetica", 9, "bold"),
             fg="#64748b",
             bg="white",
@@ -219,7 +229,7 @@ class StatisticsReportForm:
         # Khối trái: Phân bổ Nhân viên theo Phòng Ban
         chart1_box = tk.LabelFrame(
             visual_frame,
-            text=" 📊 Nhân viên theo Phòng ban ",
+            text=" Nhân viên theo Phòng ban ",
             font=("Helvetica", 10, "bold"),
             bg="white",
             fg="#0f172a",
@@ -234,7 +244,7 @@ class StatisticsReportForm:
         # Khối phải: Cơ cấu Giới tính (Nam / Nữ)
         chart2_box = tk.LabelFrame(
             visual_frame,
-            text=" 👤 Cơ cấu Giới tính ",
+            text=" Cơ cấu Giới tính ",
             font=("Helvetica", 10, "bold"),
             bg="white",
             fg="#0f172a",
@@ -278,7 +288,7 @@ class StatisticsReportForm:
         # 4. KHU VỰC 3: BẢNG THỐNG KÊ LƯƠNG THEO PHÒNG BAN
         table_box = tk.LabelFrame(
             self.parent,
-            text=" 💰 Thống kê Lương theo Phòng ban ",
+            text=" Thống kê Lương theo Phòng ban ",
             font=("Helvetica", 10, "bold"),
             bg="#f8fafc",
             fg="#0f172a",
@@ -324,7 +334,7 @@ class StatisticsReportForm:
 
         filter_box = tk.LabelFrame(
             bottom_frame,
-            text=" 📅 Bộ lọc Báo cáo ",
+            text=" Bộ lọc Báo cáo ",
             font=("Helvetica", 9, "bold"),
             bg="#f8fafc",
             fg="#0f172a",
@@ -382,7 +392,7 @@ class StatisticsReportForm:
         # Khung Chức Năng
         action_box = tk.LabelFrame(
             bottom_frame,
-            text=" ⚡ Chức năng ",
+            text=" Chức năng ",
             font=("Helvetica", 9, "bold"),
             bg="#f8fafc",
             fg="#0f172a",
@@ -391,10 +401,11 @@ class StatisticsReportForm:
         )
         action_box.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
-        tk.Button(
+        icon_button(
             action_box,
-            text="🔄 Làm mới (Hôm nay)",
-            font=("Helvetica", 9, "bold"),
+            text="Làm mới (Hôm nay)",
+            icon="refresh",
+            font=("Segoe UI", 9, "bold"),
             bg="#0284c7",
             fg="white",
             padx=10,
@@ -404,10 +415,11 @@ class StatisticsReportForm:
             command=self.reset_filters_to_now,
         ).pack(side=tk.LEFT, padx=3)
 
-        tk.Button(
+        icon_button(
             action_box,
-            text="📄 Xuất CSV (Excel)",
-            font=("Helvetica", 9, "bold"),
+            text="Xuất CSV (Excel)",
+            icon="export",
+            font=("Segoe UI", 9, "bold"),
             bg="#16a34a",
             fg="white",
             padx=10,
@@ -735,7 +747,7 @@ class StatisticsReportForm:
                 )
 
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(e, "tải báo cáo thống kê")
         finally:
             conn.close()
 
@@ -788,7 +800,7 @@ class StatisticsReportForm:
                 "Thành công", f"Đã xuất báo cáo thành công tại:\n{filepath}"
             )
         except Exception as e:
-            messagebox.showerror("Lỗi xuất file", str(e))
+            show_file_error(e, "xuất báo cáo")
 
 
 if __name__ == "__main__":

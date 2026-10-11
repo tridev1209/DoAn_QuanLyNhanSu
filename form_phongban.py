@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from db_connection import get_db_connection
 from mysql.connector import Error
+from ui_icons import get_icon, icon_button
+from user_error import show_database_error
 
 
 class DepartmentPositionForm:
@@ -75,10 +77,20 @@ class DepartmentPositionForm:
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self.tab_pb = tk.Frame(self.notebook, bg="#f8fafc", padx=12, pady=10)
-        self.notebook.add(self.tab_pb, text=" 🏢 Quản Lý Phòng Ban ")
+        self.notebook.add(
+            self.tab_pb,
+            text=" Quản Lý Phòng Ban ",
+            image=get_icon(self.parent, "department", "#2563eb"),
+            compound=tk.LEFT,
+        )
 
         self.tab_cv = tk.Frame(self.notebook, bg="#f8fafc", padx=12, pady=10)
-        self.notebook.add(self.tab_cv, text=" 🎖️ Quản Lý Chức Vụ ")
+        self.notebook.add(
+            self.tab_cv,
+            text=" Quản Lý Chức Vụ ",
+            image=get_icon(self.parent, "position", "#7c3aed"),
+            compound=tk.LEFT,
+        )
 
         self.setup_tab_phong_ban()
         self.setup_tab_chuc_vu()
@@ -147,10 +159,10 @@ class DepartmentPositionForm:
         btn_frame_pb.pack(fill=tk.X, pady=5)
 
         if self.role == "Admin":
-            tk.Button(
+            icon_button(
                 btn_frame_pb,
-                text="➕ Thêm Phòng",
-                font=("Helvetica", 10, "bold"),
+                text="Thêm Phòng",
+                icon="add",
                 bg="#2563eb",
                 fg="white",
                 padx=10,
@@ -158,10 +170,10 @@ class DepartmentPositionForm:
                 bd=0,
                 command=self.them_phong_ban,
             ).pack(side=tk.LEFT, padx=3)
-            tk.Button(
+            icon_button(
                 btn_frame_pb,
-                text="✏️ Sửa",
-                font=("Helvetica", 10, "bold"),
+                text="Sửa",
+                icon="edit",
                 bg="#eab308",
                 fg="white",
                 padx=10,
@@ -169,10 +181,10 @@ class DepartmentPositionForm:
                 bd=0,
                 command=self.sua_phong_ban,
             ).pack(side=tk.LEFT, padx=3)
-            tk.Button(
+            icon_button(
                 btn_frame_pb,
-                text="🗑️ Xóa",
-                font=("Helvetica", 10, "bold"),
+                text="Xóa",
+                icon="delete",
                 bg="#ef4444",
                 fg="white",
                 padx=10,
@@ -181,10 +193,10 @@ class DepartmentPositionForm:
                 command=self.xoa_phong_ban,
             ).pack(side=tk.LEFT, padx=3)
 
-        tk.Button(
+        icon_button(
             btn_frame_pb,
-            text="🔄 Làm mới",
-            font=("Helvetica", 10, "bold"),
+            text="Làm mới",
+            icon="refresh",
             bg="#64748b",
             fg="white",
             padx=10,
@@ -286,7 +298,7 @@ class DepartmentPositionForm:
 
             self.generate_ma_phong_ban()
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(e, "tải danh sách phòng ban")
         finally:
             conn.close()
 
@@ -318,8 +330,13 @@ class DepartmentPositionForm:
             self.load_phong_ban_data()
             self.lam_moi_pb()
         except Error as e:
-            messagebox.showerror(
-                "Lỗi", f"Mã phòng, Tên phòng hoặc Tiền tố mã đã tồn tại!\n{e}"
+            show_database_error(
+                e,
+                "thêm phòng ban",
+                duplicate_message=(
+                    "Mã phòng ban, tên phòng ban hoặc tiền tố mã đã tồn tại. "
+                    "Vui lòng nhập thông tin khác."
+                ),
             )
         finally:
             conn.close()
@@ -351,7 +368,14 @@ class DepartmentPositionForm:
             )
             self.load_phong_ban_data()
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(
+                e,
+                "cập nhật phòng ban",
+                duplicate_message=(
+                    "Tên phòng ban hoặc tiền tố mã đã tồn tại. "
+                    "Vui lòng nhập thông tin khác."
+                ),
+            )
         finally:
             conn.close()
 
@@ -402,7 +426,7 @@ class DepartmentPositionForm:
                 self.load_phong_ban_data()
                 self.lam_moi_pb()
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(e, "xóa phòng ban")
         finally:
             conn.close()
 
@@ -485,10 +509,10 @@ class DepartmentPositionForm:
         btn_frame_cv.pack(fill=tk.X, pady=5)
 
         if self.role == "Admin":
-            tk.Button(
+            icon_button(
                 btn_frame_cv,
-                text="➕ Thêm Chức Vụ",
-                font=("Helvetica", 10, "bold"),
+                text="Thêm Chức Vụ",
+                icon="add",
                 bg="#2563eb",
                 fg="white",
                 padx=10,
@@ -496,10 +520,10 @@ class DepartmentPositionForm:
                 bd=0,
                 command=self.them_chuc_vu,
             ).pack(side=tk.LEFT, padx=3)
-            tk.Button(
+            icon_button(
                 btn_frame_cv,
-                text="✏️ Sửa",
-                font=("Helvetica", 10, "bold"),
+                text="Sửa",
+                icon="edit",
                 bg="#eab308",
                 fg="white",
                 padx=10,
@@ -507,10 +531,10 @@ class DepartmentPositionForm:
                 bd=0,
                 command=self.sua_chuc_vu,
             ).pack(side=tk.LEFT, padx=3)
-            tk.Button(
+            icon_button(
                 btn_frame_cv,
-                text="🗑️ Xóa",
-                font=("Helvetica", 10, "bold"),
+                text="Xóa",
+                icon="delete",
                 bg="#ef4444",
                 fg="white",
                 padx=10,
@@ -519,10 +543,10 @@ class DepartmentPositionForm:
                 command=self.xoa_chuc_vu,
             ).pack(side=tk.LEFT, padx=3)
 
-        tk.Button(
+        icon_button(
             btn_frame_cv,
-            text="🔄 Làm mới",
-            font=("Helvetica", 10, "bold"),
+            text="Làm mới",
+            icon="refresh",
             bg="#64748b",
             fg="white",
             padx=10,
@@ -629,7 +653,7 @@ class DepartmentPositionForm:
 
             self.generate_ma_chuc_vu()
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(e, "tải danh sách chức vụ")
         finally:
             conn.close()
 
@@ -659,8 +683,13 @@ class DepartmentPositionForm:
             self.load_chuc_vu_data()
             self.lam_moi_cv()
         except Error as e:
-            messagebox.showerror(
-                "Lỗi", f"Mã chức vụ hoặc Tên chức vụ đã tồn tại!\n{e}"
+            show_database_error(
+                e,
+                "thêm chức vụ",
+                duplicate_message=(
+                    "Mã chức vụ hoặc tên chức vụ đã tồn tại. "
+                    "Vui lòng nhập thông tin khác."
+                ),
             )
         finally:
             conn.close()
@@ -692,7 +721,13 @@ class DepartmentPositionForm:
             )
             self.load_chuc_vu_data()
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(
+                e,
+                "cập nhật chức vụ",
+                duplicate_message=(
+                    "Tên chức vụ đã tồn tại. Vui lòng nhập tên khác."
+                ),
+            )
         finally:
             conn.close()
 
@@ -741,7 +776,7 @@ class DepartmentPositionForm:
                 self.load_chuc_vu_data()
                 self.lam_moi_cv()
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(e, "xóa chức vụ")
         finally:
             conn.close()
 

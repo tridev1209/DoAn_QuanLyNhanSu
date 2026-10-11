@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from db_connection import get_db_connection
 from mysql.connector import Error
+from ui_icons import get_icon, icon_button
+from user_error import show_database_error, show_file_error
 
 
 class PayrollManagementForm:
@@ -348,10 +350,10 @@ class PayrollManagementForm:
 
         if self.role != "NhanVien":
             # 1. Nút Lưu / Cập nhật (Được đưa lên đầu làm nút chính)
-            tk.Button(
+            icon_button(
                 btn_sub_frame,
-                text="💾 Lưu / Cập nhật",
-                font=("Helvetica", 10, "bold"),
+                text="Lưu / Cập nhật",
+                icon="save",
                 bg="#2563eb",
                 fg="white",
                 padx=12,
@@ -362,10 +364,10 @@ class PayrollManagementForm:
             ).pack(side=tk.LEFT, padx=3)
 
             # 2. Nút Xóa
-            tk.Button(
+            icon_button(
                 btn_sub_frame,
-                text="🗑️ Xóa",
-                font=("Helvetica", 10, "bold"),
+                text="Xóa",
+                icon="delete",
                 bg="#ef4444",
                 fg="white",
                 padx=10,
@@ -376,10 +378,10 @@ class PayrollManagementForm:
             ).pack(side=tk.LEFT, padx=3)
 
             # 3. Nút Làm mới
-            tk.Button(
+            icon_button(
                 btn_sub_frame,
-                text="🔄 Làm mới",
-                font=("Helvetica", 10, "bold"),
+                text="Làm mới",
+                icon="refresh",
                 bg="#64748b",
                 fg="white",
                 padx=10,
@@ -389,10 +391,10 @@ class PayrollManagementForm:
                 command=self.lam_moi,
             ).pack(side=tk.LEFT, padx=3)
 
-        tk.Button(
+        icon_button(
             btn_sub_frame,
-            text="📊 Xuất Bảng Lương (CSV)",
-            font=("Helvetica", 10, "bold"),
+            text="Xuất Bảng Lương (CSV)",
+            icon="export",
             bg="#10b981",
             fg="white",
             padx=10,
@@ -436,10 +438,10 @@ class PayrollManagementForm:
             )
             entry_filter_nam.pack(side=tk.LEFT, padx=2)
 
-            tk.Button(
+            icon_button(
                 search_sub_frame,
-                text="🔍 Xem",
-                font=("Helvetica", 10, "bold"),
+                text="Xem",
+                icon="search",
                 bg="#0ea5e9",
                 fg="white",
                 padx=10,
@@ -467,10 +469,10 @@ class PayrollManagementForm:
             self.entry_tim_kiem.bind("<FocusIn>", self.on_search_focus_in)
             self.entry_tim_kiem.bind("<FocusOut>", self.on_search_focus_out)
 
-            tk.Button(
+            icon_button(
                 search_sub_frame,
-                text="🔍 Tìm",
-                font=("Helvetica", 10, "bold"),
+                text="Tìm",
+                icon="search",
                 bg="#0ea5e9",
                 fg="white",
                 padx=10,
@@ -518,11 +520,15 @@ class PayrollManagementForm:
             self.context_menu = tk.Menu(self.parent, tearoff=0)
             self.context_menu.add_command(
                 label="Xem / Chỉnh sửa dòng này",
+                image=get_icon(self.parent, "edit", "#475569"),
+                compound=tk.LEFT,
                 command=self.context_edit_luong,
             )
             self.context_menu.add_separator()
             self.context_menu.add_command(
                 label="Xóa dữ liệu bảng lương này",
+                image=get_icon(self.parent, "delete", "#dc2626"),
+                compound=tk.LEFT,
                 command=self.context_delete_luong,
             )
             self.tree.bind("<Button-3>", self.show_context_menu)
@@ -1026,10 +1032,7 @@ class PayrollManagementForm:
 
         except Error as e:
 
-            messagebox.showerror(
-                "Lỗi CSDL",
-                f"Không thể tải danh sách nhân viên:\n{e}"
-            )
+            show_database_error(e, "tải danh sách nhân viên")
 
         finally:
             conn.close()
@@ -1140,7 +1143,7 @@ class PayrollManagementForm:
             )
             self.load_data()
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", f"{e}")
+            show_database_error(e, "lưu bảng lương")
         finally:
             conn.close()
 
@@ -1192,7 +1195,7 @@ class PayrollManagementForm:
                 self.load_data()
                 self.lam_moi()
             except Error as e:
-                messagebox.showerror("Lỗi CSDL", f"{e}")
+                show_database_error(e, "xóa bảng lương")
             finally:
                 conn.close()
 
@@ -1228,7 +1231,7 @@ class PayrollManagementForm:
                 "Thành công", f"Đã xuất file thành công tại:\n{filepath}"
             )
         except Exception as e:
-            messagebox.showerror("Lỗi xuất file", str(e))
+            show_file_error(e, "xuất bảng lương")
 
     def load_data(self):
         conn = get_db_connection()
@@ -1285,7 +1288,7 @@ class PayrollManagementForm:
 
             self.refresh_table(cursor.fetchall())
         except Error as e:
-            messagebox.showerror("Lỗi CSDL", str(e))
+            show_database_error(e, "tải danh sách bảng lương")
         finally:
             conn.close()
 
@@ -1355,7 +1358,7 @@ class PayrollManagementForm:
 
             self.refresh_table(cursor.fetchall())
         except Error as e:
-            messagebox.showerror("Lỗi", str(e))
+            show_database_error(e, "tìm kiếm bảng lương")
         finally:
             conn.close()
 

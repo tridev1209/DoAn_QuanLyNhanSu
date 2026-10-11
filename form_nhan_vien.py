@@ -1,35 +1,44 @@
+import calendar
 import datetime
 import re
-import hashlib
 import tkinter as tk
 from tkinter import messagebox, ttk
 from db_connection import get_db_connection
 from mysql.connector import Error
+from ui_icons import get_icon, icon_button
 
-def hash_password(password):
-    return hashlib.sha256(
-        password.encode("utf-8")
-    ).hexdigest()
+
+ROLE_ADMIN = "Admin"
+ROLE_MANAGER = "TruongPhong"
+ROLE_EMPLOYEE = "NhanVien"
+
+STATUS_WORKING = "Đang làm việc"
+STATUS_PROBATION = "Thử việc"
+STATUS_RESIGNED = "Đã nghỉ việc"
+ACTIVE_EMPLOYEE_STATUSES = {STATUS_WORKING, STATUS_PROBATION}
+
 
 class EmployeeManagementForm:
 
     def __init__(self, parent_frame, user_info=None):
         self.parent = parent_frame
 
-        # Dữ liệu tài khoản đăng nhập (Mặc định Admin nếu chạy test độc lập)
+        # Mặc định quyền thấp nhất nếu thiếu thông tin đăng nhập.
         self.user_info = user_info or {
-            "id": 1,
-            "ten_dang_nhap": "admin",
-            "vai_tro": "Admin",
-            "ho_ten": "Quản trị viên",
+            "id": None,
+            "ten_dang_nhap": "",
+            "vai_tro": ROLE_EMPLOYEE,
+            "ho_ten": "",
         }
-        self.role = self.user_info.get("vai_tro", "NhanVien")
+        self.role = self.user_info.get("vai_tro", ROLE_EMPLOYEE)
         self.user_login_name = self.user_info.get("ten_dang_nhap", "")
         self.user_db_id = self.user_info.get("id", None)
 
         # Thông tin phòng ban & Mã NV thực tế của Trưởng phòng
         self.user_ma_phong_ban = None
         self.user_actual_ma_nv = None
+        self.selected_ma_nv = None
+        self.generated_ma_nv = None
 
         # Biến quản lý giao diện
         self.var_ma_nv = tk.StringVar()
@@ -41,7 +50,7 @@ class EmployeeManagementForm:
         self.var_phong_ban = tk.StringVar()
         self.var_chuc_vu = tk.StringVar()
         self.var_luong_cb = tk.StringVar(value="12.000.000")
-        self.var_trang_thai = tk.StringVar(value="Đang làm việc")
+        self.var_trang_thai = tk.StringVar(value=STATUS_WORKING)
         self.var_tim_kiem = tk.StringVar()
 
         self.dict_phong_ban = {}
@@ -54,26 +63,112 @@ class EmployeeManagementForm:
         self.load_data()
 
     def get_user_department_and_id(self):
-        """Lấy chính xác Mã phòng ban và Mã NV thực tế của Trưởng phòng"""
+        """Lấy mã nhân viên/phòng ban, ưu tiên liên kết tài khoản bằng ID."""
         conn = get_db_connection()
         if not conn:
             return
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
-            query = """
-                SELECT ma_nv, ma_phong_ban 
-                FROM nhan_vien 
-                WHERE nguoi_dung_id = %s OR ma_nv = %s
-            """
-            cursor.execute(query, (self.user_db_id, self.user_login_name))
+            if self.user_db_id is not None:
+                cursor.execute(
+                    """
+                    SELECT ma_nv, ma_phong_ban
+                    FROM nhan_vien
+                    WHERE nguoi_dung_id = %s
+                    LIMIT 1
+                    """,
+                    (self.user_db_id,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT ma_nv, ma_phong_ban
+                    FROM nhan_vien
+                    WHERE ma_nv = %s
+                    LIMIT 1
+                    """,
+                    (self.user_login_name,),
+                )
             row = cursor.fetchone()
+            if not row and self.user_login_name:
+                cursor.execute(
+                    """
+                    SELECT ma_nv, ma_phong_ban
+                    FROM nhan_vien
+                    WHERE ma_nv = %s
+                    LIMIT 1
+                    """,
+                    (self.user_login_name,),
+                )
+                row = cursor.fetchone()
             if row:
                 self.user_ma_phong_ban = row["ma_phong_ban"]
                 self.user_actual_ma_nv = row["ma_nv"]
         except Error as e:
             print(f"Lỗi lấy thông tin Trưởng phòng: {e}")
         finally:
+            if cursor:
+                cursor.close()
             conn.close()
+
+    def can_manage_employees(self):
+        return self.role in (ROLE_ADMIN, ROLE_MANAGER)
+
+    def ensure_manage_permission(self):
+        if self.can_manage_employees():
+            return True
+        messagebox.showwarning(
+            "Không có quyền",
+            "Tài khoản hiện tại không có quyền quản lý nhân viên.",
+        )
+        return False
+
+    def ensure_manager_department(self):
+        if self.role != ROLE_MANAGER:
+            return True
+        if self.user_ma_phong_ban:
+            return True
+        messagebox.showerror(
+            "Lỗi phân quyền",
+            "Không xác định được phòng ban của Trưởng phòng. "
+            "Dữ liệu nhân viên đã được khóa để tránh truy cập sai phạm vi.",
+        )
+        return False
+
+    def is_manager_position(self, position_name):
+        return position_name.strip().casefold() == "trưởng phòng".casefold()
+
+    def account_status_from_employee_status(self, employee_status):
+        return 1 if employee_status in ACTIVE_EMPLOYEE_STATUSES else 0
+
+    def get_employee_for_update(self, cursor, ma_nv):
+        """Khóa bản ghi và xác nhận người dùng được thao tác nhân viên này."""
+        cursor.execute(
+            """
+            SELECT nv.ma_nv, nv.ma_phong_ban, nv.nguoi_dung_id,
+                   nv.trang_thai, nd.vai_tro
+            FROM nhan_vien nv
+            LEFT JOIN nguoi_dung nd ON nd.id = nv.nguoi_dung_id
+            WHERE nv.ma_nv = %s
+            FOR UPDATE
+            """,
+            (ma_nv,),
+        )
+        employee = cursor.fetchone()
+        if not employee:
+            return None, "Không tìm thấy nhân viên cần thao tác."
+
+        ma_phong_ban = employee[1]
+        if self.role == ROLE_MANAGER:
+            if not self.user_ma_phong_ban:
+                return None, "Không xác định được phòng ban của Trưởng phòng."
+            if ma_phong_ban != self.user_ma_phong_ban:
+                return None, "Trưởng phòng chỉ được thao tác nhân viên thuộc phòng mình."
+            if employee[4] == ROLE_MANAGER:
+                return None, "Trưởng phòng không được thao tác hồ sơ Trưởng phòng khác."
+
+        return employee, None
 
     # --- CÁC HÀM HỖ TRỢ ĐỊNH DẠNG VÀ PARSE TIỀN TỆ ---
     def format_money_str(self, val):
@@ -97,6 +192,185 @@ class EmployeeManagementForm:
             cleaned = cleaned[:10]
         var.set(cleaned)
         event.widget.icursor(tk.END)
+
+    @staticmethod
+    def date_years_ago(source_date, years):
+        try:
+            return source_date.replace(year=source_date.year - years)
+        except ValueError:
+            # Xử lý ngày 29/02 khi năm đích không phải năm nhuận.
+            return source_date.replace(year=source_date.year - years, day=28)
+
+    def open_birth_date_picker(self):
+        current_popup = getattr(self, "birth_date_popup", None)
+        if current_popup and current_popup.winfo_exists():
+            current_popup.lift()
+            current_popup.focus_force()
+            return
+
+        today = datetime.date.today()
+        min_birth_date = self.date_years_ago(today, 65)
+        max_birth_date = self.date_years_ago(today, 18)
+
+        try:
+            selected_date = datetime.datetime.strptime(
+                self.var_ngay_sinh.get().strip(), "%d/%m/%Y"
+            ).date()
+        except ValueError:
+            selected_date = max_birth_date
+
+        if selected_date < min_birth_date:
+            selected_date = min_birth_date
+        elif selected_date > max_birth_date:
+            selected_date = max_birth_date
+
+        popup = tk.Toplevel(self.parent)
+        self.birth_date_popup = popup
+        popup.title("Chọn ngày sinh")
+        popup.configure(bg="white")
+        popup.resizable(False, False)
+        popup.transient(self.parent.winfo_toplevel())
+
+        month_names = [f"Tháng {month}" for month in range(1, 13)]
+        month_var = tk.StringVar(value=month_names[selected_date.month - 1])
+        year_var = tk.IntVar(value=selected_date.year)
+
+        header = tk.Frame(popup, bg="#f1f5f9", padx=8, pady=8)
+        header.pack(fill=tk.X)
+        calendar_frame = tk.Frame(popup, bg="white", padx=8, pady=6)
+        calendar_frame.pack(fill=tk.BOTH, expand=True)
+
+        def close_popup(event=None):
+            if popup.winfo_exists():
+                popup.grab_release()
+                popup.destroy()
+            self.birth_date_popup = None
+
+        def choose_date(chosen_date):
+            self.var_ngay_sinh.set(chosen_date.strftime("%d/%m/%Y"))
+            self.entry_ngay_sinh.icursor(tk.END)
+            close_popup()
+            self.entry_ngay_sinh.focus_set()
+
+        def render_calendar(event=None):
+            for child in calendar_frame.winfo_children():
+                child.destroy()
+
+            month = month_names.index(month_var.get()) + 1
+            year = int(year_var.get())
+            weekdays = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
+            for column, weekday in enumerate(weekdays):
+                tk.Label(
+                    calendar_frame,
+                    text=weekday,
+                    bg="white",
+                    fg="#475569",
+                    font=("Helvetica", 9, "bold"),
+                    width=4,
+                ).grid(row=0, column=column, padx=1, pady=(0, 3))
+
+            weeks = calendar.Calendar(firstweekday=calendar.MONDAY).monthdayscalendar(
+                year, month
+            )
+            for row_index, week in enumerate(weeks, start=1):
+                for column, day in enumerate(week):
+                    if day == 0:
+                        tk.Label(calendar_frame, text="", bg="white", width=4).grid(
+                            row=row_index, column=column, padx=1, pady=1
+                        )
+                        continue
+
+                    date_value = datetime.date(year, month, day)
+                    is_allowed = min_birth_date <= date_value <= max_birth_date
+                    is_selected = date_value == selected_date
+                    tk.Button(
+                        calendar_frame,
+                        text=str(day),
+                        width=3,
+                        bd=0,
+                        relief=tk.FLAT,
+                        font=("Helvetica", 9),
+                        bg="#0ea5e9" if is_selected else "white",
+                        fg="white" if is_selected else "#0f172a",
+                        activebackground="#bae6fd",
+                        disabledforeground="#cbd5e1",
+                        state=tk.NORMAL if is_allowed else tk.DISABLED,
+                        cursor="hand2" if is_allowed else "arrow",
+                        command=lambda value=date_value: choose_date(value),
+                    ).grid(row=row_index, column=column, padx=1, pady=1)
+
+        def change_month(offset):
+            month = month_names.index(month_var.get()) + 1 + offset
+            year = int(year_var.get())
+            if month < 1:
+                month = 12
+                year -= 1
+            elif month > 12:
+                month = 1
+                year += 1
+
+            if min_birth_date.year <= year <= max_birth_date.year:
+                month_var.set(month_names[month - 1])
+                year_var.set(year)
+                render_calendar()
+
+        tk.Button(
+            header,
+            text="‹",
+            font=("Helvetica", 12, "bold"),
+            width=2,
+            bd=0,
+            bg="#e2e8f0",
+            command=lambda: change_month(-1),
+        ).pack(side=tk.LEFT)
+        month_combo = ttk.Combobox(
+            header,
+            textvariable=month_var,
+            values=month_names,
+            width=8,
+            state="readonly",
+            font=("Helvetica", 9),
+        )
+        month_combo.pack(side=tk.LEFT, padx=(6, 3))
+        year_combo = ttk.Combobox(
+            header,
+            textvariable=year_var,
+            values=list(range(max_birth_date.year, min_birth_date.year - 1, -1)),
+            width=6,
+            state="readonly",
+            font=("Helvetica", 9),
+        )
+        year_combo.pack(side=tk.LEFT, padx=(3, 6))
+        tk.Button(
+            header,
+            text="›",
+            font=("Helvetica", 12, "bold"),
+            width=2,
+            bd=0,
+            bg="#e2e8f0",
+            command=lambda: change_month(1),
+        ).pack(side=tk.LEFT)
+
+        month_combo.bind("<<ComboboxSelected>>", render_calendar)
+        year_combo.bind("<<ComboboxSelected>>", render_calendar)
+        popup.protocol("WM_DELETE_WINDOW", close_popup)
+        popup.bind("<Escape>", close_popup)
+
+        render_calendar()
+        popup.update_idletasks()
+        popup_x = self.entry_ngay_sinh.winfo_rootx()
+        popup_y = (
+            self.entry_ngay_sinh.winfo_rooty()
+            + self.entry_ngay_sinh.winfo_height()
+            + 3
+        )
+        popup_width = popup.winfo_reqwidth()
+        popup_height = popup.winfo_reqheight()
+        popup_x = min(popup_x, popup.winfo_screenwidth() - popup_width - 10)
+        popup_y = min(popup_y, popup.winfo_screenheight() - popup_height - 40)
+        popup.geometry(f"+{max(0, popup_x)}+{max(0, popup_y)}")
+        popup.grab_set()
+        popup.focus_force()
 
     def on_digits_only_key_release(self, event, var, max_len=11):
         raw = str(var.get())
@@ -250,17 +524,33 @@ class EmployeeManagementForm:
             font=("Helvetica", 10),
         ).grid(row=1, column=4, sticky="w", pady=5, padx=(15, 0))
 
-        entry_ngay_sinh = tk.Entry(
-            input_frame,
+        date_input_frame = tk.Frame(input_frame, bg="#f8fafc")
+        date_input_frame.grid(row=1, column=5, padx=5, pady=5, sticky="w")
+
+        self.entry_ngay_sinh = tk.Entry(
+            date_input_frame,
             textvariable=self.var_ngay_sinh,
-            width=20,
+            width=16,
             font=("Helvetica", 10),
         )
-        entry_ngay_sinh.grid(row=1, column=5, padx=5, pady=5, sticky="w")
-        entry_ngay_sinh.bind(
+        self.entry_ngay_sinh.pack(side=tk.LEFT)
+        self.entry_ngay_sinh.bind(
             "<KeyRelease>",
             lambda e: self.on_date_key_release(e, self.var_ngay_sinh),
         )
+        icon_button(
+            date_input_frame,
+            text="",
+            icon="calendar",
+            icon_color="#0f172a",
+            bg="#e2e8f0",
+            activebackground="#cbd5e1",
+            padx=5,
+            pady=1,
+            bd=0,
+            cursor="hand2",
+            command=self.open_birth_date_picker,
+        ).pack(side=tk.LEFT, padx=(3, 0))
 
         # Nhóm 3: Thông tin liên hệ & Tài chính
         tk.Label(
@@ -321,14 +611,17 @@ class EmployeeManagementForm:
             bg="#f8fafc",
             font=("Helvetica", 10),
         ).grid(row=3, column=0, sticky="w", pady=5)
-        ttk.Combobox(
+        self.cb_trang_thai = ttk.Combobox(
             input_frame,
             textvariable=self.var_trang_thai,
-            values=["Đang làm việc", "Thử việc", "Đã nghỉ việc"],
+            values=[STATUS_WORKING, STATUS_PROBATION, STATUS_RESIGNED],
             width=18,
             state="readonly",
             font=("Helvetica", 10),
-        ).grid(row=3, column=1, padx=5, pady=5, sticky="w")
+        )
+        self.cb_trang_thai.grid(
+            row=3, column=1, padx=5, pady=5, sticky="w"
+        )
 
         # --- THANH CÔNG CỤ ---
         action_frame = tk.Frame(self.parent, bg="#f8fafc")
@@ -337,58 +630,61 @@ class EmployeeManagementForm:
         btn_sub_frame = tk.Frame(action_frame, bg="#f8fafc")
         btn_sub_frame.pack(side=tk.LEFT)
 
-        tk.Button(
+        if self.can_manage_employees():
+            icon_button(
+                btn_sub_frame,
+                text="Thêm",
+                icon="add",
+                bg="#2563eb",
+                fg="white",
+                padx=10,
+                pady=5,
+                bd=0,
+                cursor="hand2",
+                command=self.them_nhan_vien,
+            ).pack(side=tk.LEFT, padx=3)
+            icon_button(
+                btn_sub_frame,
+                text="Sửa",
+                icon="edit",
+                bg="#eab308",
+                fg="white",
+                padx=10,
+                pady=5,
+                bd=0,
+                cursor="hand2",
+                command=self.sua_nhan_vien,
+            ).pack(side=tk.LEFT, padx=3)
+            icon_button(
+                btn_sub_frame,
+                text="Cho nghỉ việc",
+                icon="resign",
+                bg="#f97316",
+                fg="white",
+                padx=10,
+                pady=5,
+                bd=0,
+                cursor="hand2",
+                command=self.cho_nghi_viec,
+            ).pack(side=tk.LEFT, padx=3)
+
+        if self.role == ROLE_ADMIN:
+            icon_button(
+                btn_sub_frame,
+                text="Xóa vĩnh viễn",
+                icon="delete",
+                bg="#dc2626",
+                fg="white",
+                padx=10,
+                pady=5,
+                bd=0,
+                cursor="hand2",
+                command=self.xoa_vinh_vien,
+            ).pack(side=tk.LEFT, padx=3)
+        icon_button(
             btn_sub_frame,
-            text="➕ Thêm",
-            font=("Helvetica", 10, "bold"),
-            bg="#2563eb",
-            fg="white",
-            padx=10,
-            pady=5,
-            bd=0,
-            cursor="hand2",
-            command=self.them_nhan_vien,
-        ).pack(side=tk.LEFT, padx=3)
-        tk.Button(
-            btn_sub_frame,
-            text="✏️ Sửa",
-            font=("Helvetica", 10, "bold"),
-            bg="#eab308",
-            fg="white",
-            padx=10,
-            pady=5,
-            bd=0,
-            cursor="hand2",
-            command=self.sua_nhan_vien,
-        ).pack(side=tk.LEFT, padx=3)
-        tk.Button(
-            btn_sub_frame,
-            text="🚫 Cho nghỉ việc",
-            font=("Helvetica", 10, "bold"),
-            bg="#f97316",
-            fg="white",
-            padx=10,
-            pady=5,
-            bd=0,
-            cursor="hand2",
-            command=self.cho_nghi_viec,
-        ).pack(side=tk.LEFT, padx=3)
-        tk.Button(
-            btn_sub_frame,
-            text="🗑️ Xóa vĩnh viễn",
-            font=("Helvetica", 10, "bold"),
-            bg="#dc2626",
-            fg="white",
-            padx=10,
-            pady=5,
-            bd=0,
-            cursor="hand2",
-            command=self.xoa_vinh_vien,
-        ).pack(side=tk.LEFT, padx=3)
-        tk.Button(
-            btn_sub_frame,
-            text="🔄 Làm mới",
-            font=("Helvetica", 10, "bold"),
+            text="Làm mới",
+            icon="refresh",
             bg="#64748b",
             fg="white",
             padx=10,
@@ -414,18 +710,35 @@ class EmployeeManagementForm:
             textvariable=self.var_tim_kiem,
             width=22,
             font=("Helvetica", 10),
-            fg="grey",
+            fg="black",
         )
         self.entry_tim_kiem.pack(side=tk.LEFT, padx=4)
 
-        self.entry_tim_kiem.insert(0, self.placeholder_text)
+        # Hiển thị placeholder như một lớp phủ, không đưa vào giá trị thật của Entry.
+        # Nhờ vậy người dùng không thể bôi chọn hoặc vô tình tìm kiếm placeholder.
+        self.placeholder_label = tk.Label(
+            self.entry_tim_kiem,
+            text=self.placeholder_text,
+            bg="white",
+            fg="#94a3b8",
+            font=("Helvetica", 10),
+            bd=0,
+            padx=0,
+            pady=0,
+            cursor="xterm",
+        )
+        self.placeholder_label.place(x=4, rely=0.5, anchor="w")
+        self.placeholder_label.bind("<Button-1>", self.focus_search_entry)
         self.entry_tim_kiem.bind("<FocusIn>", self.on_search_focus_in)
         self.entry_tim_kiem.bind("<FocusOut>", self.on_search_focus_out)
+        self.entry_tim_kiem.bind("<KeyPress>", self.on_search_key_press)
+        self.entry_tim_kiem.bind("<Return>", lambda event: self.tim_kiem())
+        self.var_tim_kiem.trace_add("write", self.update_search_placeholder)
 
-        tk.Button(
+        icon_button(
             search_sub_frame,
-            text="🔍 Tìm",
-            font=("Helvetica", 10, "bold"),
+            text="Tìm",
+            icon="search",
             bg="#0ea5e9",
             fg="white",
             padx=10,
@@ -433,7 +746,7 @@ class EmployeeManagementForm:
             bd=0,
             command=self.tim_kiem,
         ).pack(side=tk.LEFT, padx=2)
-        tk.Button(
+        self.btn_tat_ca = tk.Button(
             search_sub_frame,
             text="Tất cả",
             font=("Helvetica", 10),
@@ -442,8 +755,9 @@ class EmployeeManagementForm:
             padx=8,
             pady=4,
             bd=0,
-            command=self.load_data,
-        ).pack(side=tk.LEFT, padx=2)
+            command=self.show_all_employees,
+        )
+        self.btn_tat_ca.pack(side=tk.LEFT, padx=2)
 
         # --- BẢNG HIỂN THỊ DỮ LIỆU ---
         table_frame = tk.Frame(self.parent)
@@ -471,24 +785,29 @@ class EmployeeManagementForm:
         )
 
         self.context_menu = tk.Menu(self.parent, tearoff=0)
-        self.context_menu = tk.Menu(self.parent, tearoff=0)
 
-        self.context_menu.add_command(
-            label="✏️ Chỉnh sửa nhân viên này",
-            command=self.context_edit_nhan_vien,
-        )
+        if self.can_manage_employees():
+            self.context_menu.add_command(
+                label="Chỉnh sửa nhân viên này",
+                image=get_icon(self.parent, "edit", "#475569"),
+                compound=tk.LEFT,
+                command=self.context_edit_nhan_vien,
+            )
+            self.context_menu.add_separator()
+            self.context_menu.add_command(
+                label="Cho nghỉ việc",
+                image=get_icon(self.parent, "resign", "#f97316"),
+                compound=tk.LEFT,
+                command=self.context_resign_nhan_vien,
+            )
 
-        self.context_menu.add_separator()
-
-        self.context_menu.add_command(
-            label="🚫 Cho nghỉ việc",
-            command=self.context_resign_nhan_vien,
-        )
-
-        self.context_menu.add_command(
-            label="🗑️ Xóa vĩnh viễn",
-            command=self.context_delete_nhan_vien,
-        )
+        if self.role == ROLE_ADMIN:
+            self.context_menu.add_command(
+                label="Xóa vĩnh viễn",
+                image=get_icon(self.parent, "delete", "#dc2626"),
+                compound=tk.LEFT,
+                command=self.context_delete_nhan_vien,
+            )
 
         headers = {
             "ma_nv": "Mã NV",
@@ -537,21 +856,39 @@ class EmployeeManagementForm:
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
+    def focus_search_entry(self, event=None):
+        self.entry_tim_kiem.focus_set()
+        self.placeholder_label.place_forget()
+
+    def update_search_placeholder(self, *args):
+        if self.var_tim_kiem.get() or self.entry_tim_kiem.focus_get() == self.entry_tim_kiem:
+            self.placeholder_label.place_forget()
+        else:
+            self.placeholder_label.place(x=4, rely=0.5, anchor="w")
+
     def on_search_focus_in(self, event):
-        if self.entry_tim_kiem.get() == self.placeholder_text:
-            self.entry_tim_kiem.delete(0, tk.END)
-            self.entry_tim_kiem.config(fg="black")
+        self.placeholder_label.place_forget()
+
+    def on_search_key_press(self, event):
+        # Ẩn ngay từ lúc nhấn phím, không phụ thuộc thứ tự xử lý của StringVar.
+        self.placeholder_label.place_forget()
 
     def on_search_focus_out(self, event):
-        if not self.entry_tim_kiem.get().strip():
-            self.entry_tim_kiem.insert(0, self.placeholder_text)
-            self.entry_tim_kiem.config(fg="grey")
+        self.update_search_placeholder()
+
+    def show_all_employees(self):
+        self.var_tim_kiem.set("")
+        self.btn_tat_ca.focus_set()
+        self.load_data(reset_search=False)
+        # Chạy sau khi Tkinter xử lý xong sự kiện click và chuyển focus.
+        self.parent.after_idle(self.update_search_placeholder)
 
     # --- TỰ ĐỘNG CHỌN & CHỈ LỌC DUY NHẤT 1 PHÒNG BAN CHO TRƯỜNG PHÒNG ---
     def load_combobox_data(self):
         conn = get_db_connection()
         if not conn:
             return
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
@@ -575,10 +912,10 @@ class EmployeeManagementForm:
             self.dict_chuc_vu = {
                 row["ten_chuc_vu"].strip(): row["ma_chuc_vu"]
                 for row in cursor.fetchall()
-}
+            }
 
             # NẾU LÀ TRƯỜNG PHÒNG: CHỈ NẠP DUY NHẤT PHÒNG BAN MÀ TRƯỜNG PHÒNG ĐÓ QUẢN LÝ
-            if self.role == "TruongPhong" and self.user_ma_phong_ban:
+            if self.role == ROLE_MANAGER and self.user_ma_phong_ban:
                 tp_ten_pb = None
                 for ten_pb, ma_pb in self.dict_phong_ban.items():
                     if ma_pb == self.user_ma_phong_ban:
@@ -591,39 +928,53 @@ class EmployeeManagementForm:
                     self.var_phong_ban.set(tp_ten_pb)
                     self.cb_pb.config(state="disabled")  # Khóa giao diện
                     self.generate_employee_id()
-            else:
+            elif self.role == ROLE_ADMIN:
                 self.cb_pb["values"] = list(self.dict_phong_ban.keys())
                 self.cb_pb.config(state="readonly")
                 if self.dict_phong_ban:
                     self.cb_pb.current(0)
                     self.generate_employee_id()
+            else:
+                # Không tải danh sách phòng ban khi tài khoản không có quyền
+                # hoặc Trưởng phòng chưa được gắn đúng phòng ban.
+                self.cb_pb["values"] = []
+                self.var_phong_ban.set("")
+                self.cb_pb.config(state="disabled")
 
             # --- PHÂN QUYỀN CHỨC VỤ ---
             if self.dict_chuc_vu:
 
                 all_chuc_vu = list(self.dict_chuc_vu.keys())
 
-                if self.role == "TruongPhong":
+                if self.role == ROLE_MANAGER and self.user_ma_phong_ban:
                     # Trưởng phòng không được chọn chức vụ "Trưởng phòng"
                     allowed_chuc_vu = [
                         cv for cv in all_chuc_vu
-                        if cv.strip().lower() != "trưởng phòng"
+                        if not self.is_manager_position(cv)
                     ]
-                else:
-                    # Admin và các quyền khác được chọn tất cả chức vụ
+                elif self.role == ROLE_ADMIN:
                     allowed_chuc_vu = all_chuc_vu
+                else:
+                    allowed_chuc_vu = []
 
                 self.cb_cv["values"] = allowed_chuc_vu
 
                 if allowed_chuc_vu:
+                    self.cb_cv.config(state="readonly")
                     self.cb_cv.current(0)
+                else:
+                    self.var_chuc_vu.set("")
+                    self.cb_cv.config(state="disabled")
         except Error as e:
             print(f"Lỗi Combobox: {e}")
         finally:
+            if cursor:
+                cursor.close()
             conn.close()
 
     def on_phong_ban_changed(self, event):
-        self.generate_employee_id()
+        if not self.selected_ma_nv:
+            self.generate_employee_id()
 
     def generate_employee_id(self):
         selected_pb_name = self.var_phong_ban.get()
@@ -636,48 +987,95 @@ class EmployeeManagementForm:
         conn = get_db_connection()
         if not conn:
             return
+        cursor = None
         try:
             cursor = conn.cursor()
-            query = """
-                SELECT ma_nv FROM nhan_vien 
-                WHERE ma_phong_ban = %s AND ma_nv LIKE %s
-                ORDER BY ma_nv DESC LIMIT 1
-            """
-            cursor.execute(query, (ma_phong, f"{prefix}%"))
-            row = cursor.fetchone()
-
-            if row:
-                last_id = row[0]  # Lấy chuỗi mã NV
-                try:
-                    number_part = int(last_id.replace(prefix, ""))
-                    new_number = number_part + 1
-                except ValueError:
-                    new_number = 1
-            else:
-                new_number = 1
-
-            new_ma_nv = f"{prefix}{new_number:03d}"
+            new_ma_nv = self.calculate_next_employee_id(
+                cursor, ma_phong, prefix
+            )
+            self.generated_ma_nv = new_ma_nv
             self.var_ma_nv.set(new_ma_nv)
         except Error as e:
             print(f"Lỗi sinh mã NV: {e}")
         finally:
+            if cursor:
+                cursor.close()
             conn.close()
 
-    def validate_inputs(self):
+    def calculate_next_employee_id(
+        self, cursor, ma_phong_ban, prefix, lock_rows=False
+    ):
+        query = "SELECT ma_nv FROM nhan_vien WHERE ma_phong_ban = %s"
+        if lock_rows:
+            query += " FOR UPDATE"
+        cursor.execute(query, (ma_phong_ban,))
+
+        used_numbers = []
+        for row in cursor.fetchall():
+            employee_id = str(row[0])
+            if not employee_id.startswith(prefix):
+                continue
+            suffix = employee_id[len(prefix):]
+            if suffix.isdigit():
+                used_numbers.append(int(suffix))
+
+        return f"{prefix}{max(used_numbers, default=0) + 1:03d}"
+
+    def validate_inputs(self, for_create=False):
         ma = self.var_ma_nv.get().strip()
         ten = self.capitalize_name(self.var_ten_nv.get())
-        email = self.var_email.get().strip()
+        email = self.var_email.get().strip().lower()
         sdt = self.var_sdt.get().strip()
         ngay_sinh_str = self.var_ngay_sinh.get().strip()
-        selected_pb_name = self.var_phong_ban.get()
+        selected_pb_name = self.var_phong_ban.get().strip()
+        selected_cv_name = self.var_chuc_vu.get().strip()
+        employee_status = self.var_trang_thai.get().strip()
 
         self.var_ten_nv.set(ten)
+        self.var_email.set(email)
 
         if not ma or not ten or not email or not sdt:
             messagebox.showwarning(
                 "Cảnh báo",
                 "Vui lòng nhập đầy đủ các thông tin bắt buộc (*): Mã NV, Họ Tên,"
                 " Email, Số ĐT!",
+            )
+            return False
+
+        if selected_pb_name not in self.dict_phong_ban:
+            messagebox.showwarning(
+                "Cảnh báo", "Vui lòng chọn một phòng ban hợp lệ!"
+            )
+            return False
+
+        if selected_cv_name not in self.dict_chuc_vu:
+            messagebox.showwarning(
+                "Cảnh báo", "Vui lòng chọn một chức vụ hợp lệ!"
+            )
+            return False
+
+        if employee_status not in {
+            STATUS_WORKING,
+            STATUS_PROBATION,
+            STATUS_RESIGNED,
+        }:
+            messagebox.showwarning(
+                "Cảnh báo", "Trạng thái nhân viên không hợp lệ!"
+            )
+            return False
+
+        if for_create and employee_status == STATUS_RESIGNED:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Không thể thêm mới nhân viên ở trạng thái 'Đã nghỉ việc'.",
+            )
+            return False
+
+        if len(ma) > 20 or len(ten) > 100 or len(email) > 100 or len(sdt) > 15:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Dữ liệu vượt quá độ dài cho phép của Mã NV, Họ tên, "
+                "Email hoặc Số điện thoại.",
             )
             return False
 
@@ -763,33 +1161,66 @@ class EmployeeManagementForm:
             )
             return False
 
+        if luong_val > 9_999_999_999_999.99:
+            messagebox.showwarning(
+                "Cảnh báo", "Lương cơ bản vượt quá giới hạn lưu trữ!"
+            )
+            return False
+
         return True
 
     def check_truong_phong_constraint(
-        self, ma_phong_ban, ma_chuc_vu_truong_phong, current_ma_nv=""
+        self, ma_phong_ban, current_ma_nv="", cursor=None
     ):
-        conn = get_db_connection()
-        if not conn:
-            return True
+        own_connection = cursor is None
+        conn = get_db_connection() if own_connection else None
+        if own_connection and not conn:
+            return False
+        work_cursor = None
         try:
-            cursor = conn.cursor()
-            query = (
-                "SELECT ma_nv FROM nhan_vien WHERE ma_phong_ban = %s AND"
-                " ma_chuc_vu = %s"
-            )
-            cursor.execute(query, (ma_phong_ban, ma_chuc_vu_truong_phong))
-            rows = cursor.fetchall()
-
-            for row in rows:
-                existing_nv = row[0]
-                if existing_nv != current_ma_nv:
+            work_cursor = cursor or conn.cursor()
+            if not own_connection:
+                work_cursor.execute(
+                    """
+                    SELECT ma_phong_ban
+                    FROM phong_ban
+                    WHERE ma_phong_ban = %s
+                    FOR UPDATE
+                    """,
+                    (ma_phong_ban,),
+                )
+                if not work_cursor.fetchone():
                     return False
-            return True
+            query = """
+                SELECT nv.ma_nv
+                FROM nhan_vien nv
+                INNER JOIN chuc_vu cv ON cv.ma_chuc_vu = nv.ma_chuc_vu
+                WHERE nv.ma_phong_ban = %s
+                  AND LOWER(TRIM(cv.ten_chuc_vu)) = LOWER(%s)
+                  AND nv.trang_thai <> %s
+                  AND nv.ma_nv <> %s
+                LIMIT 1
+            """
+            if not own_connection:
+                query += " FOR UPDATE"
+            work_cursor.execute(
+                query,
+                (
+                    ma_phong_ban,
+                    "Trưởng phòng",
+                    STATUS_RESIGNED,
+                    current_ma_nv,
+                ),
+            )
+            return work_cursor.fetchone() is None
         except Error as e:
             print(f"Lỗi kiểm tra trưởng phòng: {e}")
-            return True
+            return False
         finally:
-            conn.close()
+            if own_connection and conn:
+                if work_cursor:
+                    work_cursor.close()
+                conn.close()
 
     def format_date_to_db(self, date_str):
         try:
@@ -799,19 +1230,147 @@ class EmployeeManagementForm:
         except Exception:
             return None
 
+    def find_duplicate_employee_data(
+        self,
+        cursor,
+        ma_nv,
+        email,
+        sdt,
+        current_ma_nv=None,
+        current_user_id=None,
+        check_identity=False,
+    ):
+        """Trả về các trường bị trùng để cảnh báo trước khi ghi dữ liệu."""
+        duplicates = []
+
+        if check_identity:
+            cursor.execute(
+                "SELECT 1 FROM nhan_vien WHERE ma_nv = %s LIMIT 1",
+                (ma_nv,),
+            )
+            if cursor.fetchone():
+                duplicates.append(f"Mã nhân viên '{ma_nv}' đã được sử dụng")
+
+            cursor.execute(
+                "SELECT 1 FROM nguoi_dung WHERE ten_dang_nhap = %s LIMIT 1",
+                (ma_nv,),
+            )
+            if cursor.fetchone():
+                duplicates.append(f"Tên đăng nhập '{ma_nv}' đã được sử dụng")
+
+        cursor.execute(
+            """
+            SELECT 1
+            FROM nhan_vien
+            WHERE email = %s AND (%s IS NULL OR ma_nv <> %s)
+            LIMIT 1
+            """,
+            (email, current_ma_nv, current_ma_nv),
+        )
+        email_exists = cursor.fetchone() is not None
+
+        if check_identity or current_user_id is not None:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM nguoi_dung
+                WHERE email = %s AND (%s IS NULL OR id <> %s)
+                LIMIT 1
+                """,
+                (email, current_user_id, current_user_id),
+            )
+            # Luôn đọc kết quả truy vấn trước khi kết hợp điều kiện. Nếu dùng
+            # phép `or` trực tiếp, Python có thể bỏ qua fetchone() và khiến
+            # MySQL báo "Unread result found" ở câu lệnh kế tiếp.
+            account_email_exists = cursor.fetchone() is not None
+            email_exists = email_exists or account_email_exists
+
+        if email_exists:
+            duplicates.append(f"Email '{email}' đã được sử dụng")
+
+        cursor.execute(
+            """
+            SELECT 1
+            FROM nhan_vien
+            WHERE sdt = %s AND (%s IS NULL OR ma_nv <> %s)
+            LIMIT 1
+            """,
+            (sdt, current_ma_nv, current_ma_nv),
+        )
+        if cursor.fetchone():
+            duplicates.append(f"Số điện thoại '{sdt}' đã được sử dụng")
+
+        return duplicates
+
+    @staticmethod
+    def format_duplicate_warning(duplicates):
+        details = "\n".join(f"• {item}" for item in duplicates)
+        return (
+            "Không thể lưu thông tin vì dữ liệu sau đã tồn tại:\n\n"
+            f"{details}\n\n"
+            "Vui lòng kiểm tra và nhập giá trị khác."
+        )
+
+    def show_operation_error(self, action, error):
+        """Ẩn chi tiết MySQL và chuyển lỗi kỹ thuật thành hướng dẫn dễ hiểu."""
+        print(f"Lỗi khi {action}: {error}")
+        errno = getattr(error, "errno", None)
+        error_text = str(error).lower()
+
+        if errno == 1062:
+            if "sdt" in error_text:
+                message = "Số điện thoại này đã được sử dụng bởi nhân viên khác."
+            elif "email" in error_text:
+                message = "Email này đã được sử dụng bởi nhân viên hoặc tài khoản khác."
+            elif "ten_dang_nhap" in error_text:
+                message = "Tên đăng nhập này đã tồn tại. Vui lòng làm mới mã nhân viên."
+            elif "primary" in error_text or "ma_nv" in error_text:
+                message = "Mã nhân viên này đã tồn tại. Vui lòng làm mới hoặc đổi mã."
+            else:
+                message = "Một giá trị duy nhất đã được sử dụng. Vui lòng kiểm tra lại dữ liệu."
+        elif errno in (1451, 1452):
+            message = (
+                "Dữ liệu đang liên kết với thông tin khác hoặc thông tin được chọn "
+                "không còn tồn tại. Vui lòng tải lại danh sách và thử lại."
+            )
+        elif errno in (1048, 1265, 1366, 1406):
+            message = (
+                "Một trường dữ liệu đang thiếu, sai định dạng hoặc vượt quá độ dài "
+                "cho phép. Vui lòng kiểm tra lại thông tin đã nhập."
+            )
+        elif errno in (1205, 1213):
+            message = "Dữ liệu đang được xử lý ở phiên khác. Vui lòng thử lại sau ít giây."
+        elif errno in (1049, 1146):
+            message = "Cấu hình dữ liệu của hệ thống chưa đầy đủ. Vui lòng liên hệ quản trị viên."
+        else:
+            message = (
+                f"Hệ thống chưa thể {action}. Vui lòng thử lại. "
+                "Nếu lỗi tiếp tục xảy ra, hãy liên hệ quản trị viên."
+            )
+
+        messagebox.showerror(f"Không thể {action}", message)
+
     # --- NẠP DỮ LIỆU BẢNG: CHỈ LỌC DUY NHẤT NHÂN VIÊN PHÒNG MÌNH VỚI QUA N TRƯỜNG PHÒNG ---
-    def load_data(self):
-        self.entry_tim_kiem.delete(0, tk.END)
-        self.entry_tim_kiem.insert(0, self.placeholder_text)
-        self.entry_tim_kiem.config(fg="grey")
+    def load_data(self, reset_search=True):
+        if reset_search:
+            self.var_tim_kiem.set("")
+        self.update_search_placeholder()
+
+        if not self.can_manage_employees():
+            self.refresh_table([])
+            return
+        if self.role == ROLE_MANAGER and not self.user_ma_phong_ban:
+            self.refresh_table([])
+            return
 
         conn = get_db_connection()
         if not conn:
             return
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
 
-            if self.role == "TruongPhong" and self.user_ma_phong_ban:
+            if self.role == ROLE_MANAGER:
                 query = """
                     SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh, nv.email, nv.sdt, 
                            pb.ten_phong_ban, cv.ten_chuc_vu, nv.luong_co_ban, nv.trang_thai
@@ -835,8 +1394,10 @@ class EmployeeManagementForm:
 
             self.refresh_table(cursor.fetchall())
         except Error as e:
-            messagebox.showerror("Lỗi", str(e))
+            self.show_operation_error("tải danh sách nhân viên", e)
         finally:
+            if cursor:
+                cursor.close()
             conn.close()
 
     def refresh_table(self, data_list):
@@ -865,10 +1426,18 @@ class EmployeeManagementForm:
             )
 
     def them_nhan_vien(self):
-        # =========================================================
-        # 1. KIỂM TRA DỮ LIỆU
-        # =========================================================
-        if not self.validate_inputs():
+        if not self.ensure_manage_permission():
+            return
+        if not self.ensure_manager_department():
+            return
+        if self.selected_ma_nv:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Bạn đang chọn một nhân viên có sẵn. "
+                "Hãy bấm 'Làm mới' trước khi thêm nhân viên.",
+            )
+            return
+        if not self.validate_inputs(for_create=True):
             return
 
         selected_pb_name = self.var_phong_ban.get().strip()
@@ -882,73 +1451,22 @@ class EmployeeManagementForm:
 
         ma_phong = self.dict_phong_ban.get(selected_pb_name)
         ma_chuc_vu = self.dict_chuc_vu.get(selected_cv_name)
+        prefix = self.dict_tien_to.get(selected_pb_name, "NV")
 
-        # =========================================================
-        # 2. KIỂM TRA PHÒNG BAN
-        # =========================================================
-        if not ma_phong:
+        if self.role == ROLE_MANAGER:
+            ma_phong = self.user_ma_phong_ban
+
+        is_manager_position = self.is_manager_position(selected_cv_name)
+        if is_manager_position and self.role == ROLE_MANAGER:
             messagebox.showwarning(
-                "Cảnh báo",
-                "Không xác định được phòng ban của nhân viên!"
+                "Không có quyền",
+                "Trưởng phòng không được phép tạo nhân viên "
+                "có chức vụ Trưởng phòng!"
             )
             return
 
-        # =========================================================
-        # 3. TRƯỞNG PHÒNG CHỈ ĐƯỢC THÊM NHÂN VIÊN
-        #    TRONG PHÒNG BAN CỦA MÌNH
-        # =========================================================
-        if self.role == "TruongPhong":
-            if not self.user_ma_phong_ban:
-                messagebox.showerror(
-                    "Lỗi",
-                    "Không xác định được phòng ban của Trưởng phòng!"
-                )
-                return
-
-            # Không tin dữ liệu từ Combobox,
-            # lấy phòng ban trực tiếp từ tài khoản đăng nhập
-            ma_phong = self.user_ma_phong_ban
-
-        # =========================================================
-        # 4. KIỂM TRA CHỨC VỤ TRƯỞNG PHÒNG
-        # =========================================================
-        if "trưởng phòng" in selected_cv_name.lower():
-
-            # Trưởng phòng không được tạo thêm Trưởng phòng
-            if self.role == "TruongPhong":
-                messagebox.showwarning(
-                    "Không có quyền",
-                    "Trưởng phòng không được phép tạo nhân viên "
-                    "có chức vụ Trưởng phòng!"
-                )
-                return
-
-            # Admin tạo Trưởng phòng thì phải kiểm tra mỗi phòng
-            # chỉ có tối đa 1 Trưởng phòng
-            if not self.check_truong_phong_constraint(
-                ma_phong,
-                ma_chuc_vu
-            ):
-                messagebox.showwarning(
-                    "Cảnh báo",
-                    f"Phòng '{selected_pb_name}' đã có Trưởng phòng rồi!\n\n"
-                    "Mỗi phòng chỉ được phép có 1 Trưởng phòng."
-                )
-                return
-
-        # =========================================================
-        # 5. XÁC ĐỊNH VAI TRÒ TÀI KHOẢN
-        # =========================================================
-        if "trưởng phòng" in selected_cv_name.lower():
-            vai_tro = "TruongPhong"
-        else:
-            vai_tro = "NhanVien"
-
-        # =========================================================
-        # 6. KẾT NỐI DATABASE
-        # =========================================================
+        vai_tro = ROLE_MANAGER if is_manager_position else ROLE_EMPLOYEE
         conn = get_db_connection()
-
         if not conn:
             messagebox.showerror(
                 "Lỗi",
@@ -956,14 +1474,66 @@ class EmployeeManagementForm:
             )
             return
 
+        cursor = None
         try:
             cursor = conn.cursor()
 
-            # =====================================================
-            # 7. TẠO TÀI KHOẢN ĐĂNG NHẬP
-            # =====================================================
+            # Khóa phòng ban để hai phiên không cùng sinh một mã nhân viên.
+            cursor.execute(
+                """
+                SELECT ma_phong_ban
+                FROM phong_ban
+                WHERE ma_phong_ban = %s
+                FOR UPDATE
+                """,
+                (ma_phong,),
+            )
+            if not cursor.fetchone():
+                conn.rollback()
+                messagebox.showerror(
+                    "Lỗi", "Phòng ban đã chọn không còn tồn tại."
+                )
+                return
+
+            if ma == self.generated_ma_nv:
+                ma = self.calculate_next_employee_id(
+                    cursor, ma_phong, prefix, lock_rows=True
+                )
+                self.var_ma_nv.set(ma)
+
+            duplicates = self.find_duplicate_employee_data(
+                cursor,
+                ma,
+                email,
+                sdt,
+                check_identity=True,
+            )
+            if duplicates:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Dữ liệu đã tồn tại",
+                    self.format_duplicate_warning(duplicates),
+                )
+                return
+
+            if is_manager_position and not self.check_truong_phong_constraint(
+                ma_phong, cursor=cursor
+            ):
+                conn.rollback()
+                messagebox.showwarning(
+                    "Cảnh báo",
+                    f"Phòng '{selected_pb_name}' đã có Trưởng phòng hoặc "
+                    "không thể xác minh ràng buộc Trưởng phòng.",
+                )
+                return
+
             username = ma
+            # Luồng đăng nhập hiện tại của ứng dụng vẫn dùng mật khẩu rõ.
+            # Không hash riêng tại đây vì sẽ làm tài khoản mới không đăng nhập được.
             default_password = "123456"
+            account_status = self.account_status_from_employee_status(
+                self.var_trang_thai.get()
+            )
 
             query_user = """
                 INSERT INTO nguoi_dung
@@ -975,7 +1545,7 @@ class EmployeeManagementForm:
                     vai_tro,
                     trang_thai
                 )
-                VALUES (%s, %s, %s, %s, %s, 1)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """
 
             cursor.execute(
@@ -985,16 +1555,12 @@ class EmployeeManagementForm:
                     default_password,
                     ten,
                     email,
-                    vai_tro
+                    vai_tro,
+                    account_status,
                 )
             )
 
-            # Lấy ID tài khoản vừa tạo
             nguoi_dung_id = cursor.lastrowid
-
-            # =====================================================
-            # 8. TẠO NHÂN VIÊN
-            # =====================================================
             query_nv = """
                 INSERT INTO nhan_vien
                 (
@@ -1036,9 +1602,6 @@ class EmployeeManagementForm:
                 )
             )
 
-            # =====================================================
-            # 9. HOÀN TẤT TRANSACTION
-            # =====================================================
             conn.commit()
 
             messagebox.showinfo(
@@ -1053,45 +1616,42 @@ class EmployeeManagementForm:
                 f"Vai trò: {vai_tro}"
             )
 
-            self.load_data()
             self.lam_moi()
 
         except Error as e:
-
-            # Nếu xảy ra lỗi thì hủy TOÀN BỘ thao tác
             conn.rollback()
-
-            messagebox.showerror(
-                "Lỗi CSDL",
-                f"Không thể thêm nhân viên và tạo tài khoản!\n\n{e}"
-            )
+            self.show_operation_error("thêm nhân viên và tạo tài khoản", e)
 
         finally:
-            cursor.close()
+            if cursor:
+                cursor.close()
             conn.close()
 
     def sua_nhan_vien(self):
-        ma = self.var_ma_nv.get().strip()
-
-        if not ma:
+        if not self.ensure_manage_permission():
+            return
+        if not self.ensure_manager_department():
+            return
+        if not self.selected_ma_nv:
             messagebox.showwarning(
-                "Cảnh báo",
-                "Vui lòng chọn nhân viên cần sửa!"
+                "Cảnh báo", "Vui lòng chọn nhân viên cần sửa từ danh sách!"
             )
             return
-
-        # =========================================================
-        # TRƯỞNG PHÒNG KHÔNG ĐƯỢC SỬA CHÍNH MÌNH
-        # =========================================================
-        if self.role == "TruongPhong" and (
-            ma == self.user_actual_ma_nv
-            or ma == self.user_login_name
+        if self.role == ROLE_MANAGER and self.selected_ma_nv in (
+            self.user_actual_ma_nv,
+            self.user_login_name,
         ):
             messagebox.showwarning(
                 "Không có quyền",
-                "Trưởng phòng không thể tự chỉnh sửa hồ sơ "
-                "của chính mình!\n\n"
-                "Thông tin Trưởng phòng do Admin quản lý."
+                "Trưởng phòng không thể tự chỉnh sửa hồ sơ của chính mình.",
+            )
+            return
+
+        ma = self.var_ma_nv.get().strip()
+        if ma != self.selected_ma_nv:
+            messagebox.showwarning(
+                "Không thể đổi mã",
+                "Mã nhân viên là khóa định danh và không thể đổi khi sửa.",
             )
             return
 
@@ -1104,78 +1664,91 @@ class EmployeeManagementForm:
         ma_phong = self.dict_phong_ban.get(selected_pb_name)
         ma_chuc_vu = self.dict_chuc_vu.get(selected_cv_name)
 
-        # =========================================================
-        # TRƯỞNG PHÒNG CHỈ ĐƯỢC SỬA TRONG PHÒNG MÌNH
-        # =========================================================
-        if self.role == "TruongPhong":
-
-            if not self.user_ma_phong_ban:
-                messagebox.showerror(
-                    "Lỗi",
-                    "Không xác định được phòng ban của Trưởng phòng!"
-                )
-                return
-
+        if self.role == ROLE_MANAGER:
             ma_phong = self.user_ma_phong_ban
 
-        # =========================================================
-        # KIỂM TRA TRƯỞNG PHÒNG
-        # =========================================================
-        if "trưởng phòng" in selected_cv_name.lower():
+        is_manager_position = self.is_manager_position(selected_cv_name)
+        if is_manager_position and self.role == ROLE_MANAGER:
+            messagebox.showwarning(
+                "Không có quyền",
+                "Trưởng phòng không được phép bổ nhiệm nhân viên khác "
+                "làm Trưởng phòng!",
+            )
+            return
 
-            if self.role == "TruongPhong":
-                messagebox.showwarning(
-                    "Không có quyền",
-                    "Trưởng phòng không được phép bổ nhiệm "
-                    "nhân viên khác làm Trưởng phòng!"
-                )
-                return
-
-            if not self.check_truong_phong_constraint(
-                ma_phong,
-                ma_chuc_vu,
-                current_ma_nv=ma
-            ):
-                messagebox.showwarning(
-                    "Cảnh báo",
-                    f"Phòng '{selected_pb_name}' đã có "
-                    "Trưởng phòng khác!\n\n"
-                    "Mỗi phòng chỉ được phép có 1 Trưởng phòng."
-                )
-                return
-
-        # =========================================================
-        # XÁC ĐỊNH ROLE MỚI
-        # =========================================================
-        if "trưởng phòng" in selected_cv_name.lower():
-            vai_tro = "TruongPhong"
-        else:
-            vai_tro = "NhanVien"
-
-        luong_float = self.parse_money(
-            self.var_luong_cb.get()
-        )
-
+        vai_tro = ROLE_MANAGER if is_manager_position else ROLE_EMPLOYEE
+        luong_float = self.parse_money(self.var_luong_cb.get())
         ten = self.var_ten_nv.get().strip()
         email = self.var_email.get().strip()
         gioi_tinh = self.var_gioi_tinh.get()
-        ngay_sinh = self.format_date_to_db(
-            self.var_ngay_sinh.get()
-        )
+        ngay_sinh = self.format_date_to_db(self.var_ngay_sinh.get())
         sdt = self.var_sdt.get().strip()
         trang_thai = self.var_trang_thai.get()
 
         conn = get_db_connection()
-
         if not conn:
             return
 
+        cursor = None
         try:
             cursor = conn.cursor()
+            employee, permission_error = self.get_employee_for_update(cursor, ma)
+            if permission_error:
+                conn.rollback()
+                messagebox.showwarning("Không thể cập nhật", permission_error)
+                return
 
-            # =====================================================
-            # 1. CẬP NHẬT NHÂN VIÊN
-            # =====================================================
+            employee_user_id = employee[2]
+            duplicates = self.find_duplicate_employee_data(
+                cursor,
+                ma,
+                email,
+                sdt,
+                current_ma_nv=ma,
+                current_user_id=employee_user_id,
+            )
+            if duplicates:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Dữ liệu đã tồn tại",
+                    self.format_duplicate_warning(duplicates),
+                )
+                return
+
+            is_current_user = (
+                employee_user_id is not None
+                and str(employee_user_id) == str(self.user_db_id)
+            ) or ma in (self.user_actual_ma_nv, self.user_login_name)
+            if self.role == ROLE_MANAGER and is_current_user:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Không có quyền",
+                    "Trưởng phòng không thể tự chỉnh sửa hồ sơ của chính mình.",
+                )
+                return
+            if is_current_user and trang_thai == STATUS_RESIGNED:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Không có quyền",
+                    "Bạn không thể tự chuyển hồ sơ của mình sang trạng thái nghỉ việc.",
+                )
+                return
+
+            if is_manager_position and not self.check_truong_phong_constraint(
+                ma_phong, current_ma_nv=ma, cursor=cursor
+            ):
+                conn.rollback()
+                messagebox.showwarning(
+                    "Cảnh báo",
+                    f"Phòng '{selected_pb_name}' đã có Trưởng phòng khác "
+                    "hoặc không thể xác minh ràng buộc Trưởng phòng.",
+                )
+                return
+
+            # Không tự hạ quyền tài khoản Admin đang đăng nhập.
+            if self.role == ROLE_ADMIN and is_current_user:
+                vai_tro = ROLE_ADMIN
+
             query_nv = """
                 UPDATE nhan_vien
                 SET
@@ -1203,66 +1776,56 @@ class EmployeeManagementForm:
                     ma_chuc_vu,
                     luong_float,
                     trang_thai,
-                    ma
+                    ma,
                 )
             )
 
-            # =====================================================
-            # 2. ĐỒNG BỘ TÀI KHOẢN
-            # =====================================================
-            query_user = """
-                UPDATE nguoi_dung nd
-                INNER JOIN nhan_vien nv
-                    ON nv.nguoi_dung_id = nd.id
-                SET
-                    nd.ho_ten=%s,
-                    nd.email=%s,
-                    nd.vai_tro=%s,
-                    nd.trang_thai=
-                        CASE
-                            WHEN %s = 'Đang làm việc'
-                            THEN 1
-                            ELSE 0
-                        END
-                WHERE nv.ma_nv=%s
-            """
-
-            cursor.execute(
-                query_user,
-                (
-                    ten,
-                    email,
-                    vai_tro,
-                    trang_thai,
-                    ma
+            if employee_user_id is not None:
+                cursor.execute(
+                    """
+                    UPDATE nguoi_dung
+                    SET ho_ten=%s, email=%s, vai_tro=%s, trang_thai=%s
+                    WHERE id=%s
+                    """,
+                    (
+                        ten,
+                        email,
+                        vai_tro,
+                        self.account_status_from_employee_status(trang_thai),
+                        employee_user_id,
+                    ),
                 )
-            )
 
             conn.commit()
 
+            account_message = (
+                "Thông tin tài khoản đăng nhập cũng đã được đồng bộ."
+                if employee_user_id is not None
+                else "Nhân viên chưa có tài khoản đăng nhập để đồng bộ."
+            )
             messagebox.showinfo(
                 "Thành công",
                 f"Đã cập nhật nhân viên {ma}!\n\n"
-                "Thông tin tài khoản đăng nhập cũng đã được "
-                "đồng bộ."
+                f"{account_message}"
             )
 
-            self.load_data()
+            self.lam_moi()
 
         except Error as e:
-
             conn.rollback()
-
-            messagebox.showerror(
-                "Lỗi CSDL",
-                f"Không thể cập nhật nhân viên!\n\n{e}"
-            )
+            self.show_operation_error("cập nhật nhân viên", e)
 
         finally:
-            cursor.close()
+            if cursor:
+                cursor.close()
             conn.close()
 
     def cho_nghi_viec(self):
+        if not self.ensure_manage_permission():
+            return
+        if not self.ensure_manager_department():
+            return
+
         selected = self.tree.selection()
 
         if not selected:
@@ -1277,19 +1840,18 @@ class EmployeeManagementForm:
         ho_ten = vals[1]
         trang_thai = vals[9]
 
-        # Trưởng phòng không được tự cho mình nghỉ việc
-        if self.role == "TruongPhong" and (
-            ma_nv == self.user_actual_ma_nv
-            or ma_nv == self.user_login_name
+        if self.role == ROLE_MANAGER and ma_nv in (
+            self.user_actual_ma_nv,
+            self.user_login_name,
         ):
             messagebox.showwarning(
                 "Không có quyền",
-                "Trưởng phòng không thể tự cho mình nghỉ việc!"
+                "Trưởng phòng không thể tự cho hồ sơ của mình nghỉ việc.",
             )
             return
 
         # Đã nghỉ rồi thì không cho thực hiện lại
-        if trang_thai == "Đã nghỉ việc":
+        if trang_thai == STATUS_RESIGNED:
             messagebox.showinfo(
                 "Thông báo",
                 f"Nhân viên {ho_ten} đã ở trạng thái 'Đã nghỉ việc'."
@@ -1311,52 +1873,83 @@ class EmployeeManagementForm:
         if not conn:
             return
 
+        cursor = None
         try:
             cursor = conn.cursor()
+            employee, permission_error = self.get_employee_for_update(
+                cursor, ma_nv
+            )
+            if permission_error:
+                conn.rollback()
+                messagebox.showwarning("Không thể cho nghỉ việc", permission_error)
+                return
 
-            # 1. Chuyển trạng thái nhân viên
+            employee_user_id = employee[2]
+            is_current_user = (
+                employee_user_id is not None
+                and str(employee_user_id) == str(self.user_db_id)
+            ) or ma_nv in (self.user_actual_ma_nv, self.user_login_name)
+            if is_current_user:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Không có quyền",
+                    "Bạn không thể tự cho hồ sơ của chính mình nghỉ việc.",
+                )
+                return
+            if employee[3] == STATUS_RESIGNED:
+                conn.rollback()
+                messagebox.showinfo(
+                    "Thông báo",
+                    f"Nhân viên {ho_ten} đã ở trạng thái 'Đã nghỉ việc'.",
+                )
+                return
+
             cursor.execute(
                 """
                 UPDATE nhan_vien
-                SET trang_thai = 'Đã nghỉ việc'
+                SET trang_thai = %s
                 WHERE ma_nv = %s
                 """,
-                (ma_nv,)
+                (STATUS_RESIGNED, ma_nv),
             )
 
-            # 2. Khóa tài khoản đăng nhập
-            cursor.execute(
-                """
-                UPDATE nguoi_dung nd
-                INNER JOIN nhan_vien nv
-                    ON nv.nguoi_dung_id = nd.id
-                SET nd.trang_thai = 0
-                WHERE nv.ma_nv = %s
-                """,
-                (ma_nv,)
-            )
+            if employee_user_id is not None:
+                cursor.execute(
+                    "UPDATE nguoi_dung SET trang_thai = 0 WHERE id = %s",
+                    (employee_user_id,),
+                )
 
             conn.commit()
 
+            account_message = (
+                "Tài khoản đăng nhập cũng đã được khóa."
+                if employee_user_id is not None
+                else "Nhân viên không có tài khoản đăng nhập cần khóa."
+            )
             messagebox.showinfo(
                 "Thành công",
                 f"Đã cho nhân viên {ho_ten} nghỉ việc.\n\n"
-                f"Tài khoản đăng nhập cũng đã được khóa."
+                f"{account_message}"
             )
 
-            self.load_data()
             self.lam_moi()
 
         except Error as e:
             conn.rollback()
-            messagebox.showerror(
-                "Lỗi CSDL",
-                f"Không thể cho nhân viên nghỉ việc:\n{e}"
-            )
+            self.show_operation_error("cho nhân viên nghỉ việc", e)
 
         finally:
+            if cursor:
+                cursor.close()
             conn.close()
     def xoa_vinh_vien(self):
+        if self.role != ROLE_ADMIN:
+            messagebox.showwarning(
+                "Không có quyền",
+                "Chỉ Admin mới được phép xóa nhân viên vĩnh viễn!",
+            )
+            return
+
         selected = self.tree.selection()
 
         if not selected:
@@ -1372,20 +1965,7 @@ class EmployeeManagementForm:
         ho_ten = vals[1]
         trang_thai = vals[9]
 
-        # =========================================================
-        # 1. CHỈ ADMIN ĐƯỢC XÓA VĨNH VIỄN
-        # =========================================================
-        if self.role != "Admin":
-            messagebox.showwarning(
-                "Không có quyền",
-                "Chỉ Admin mới được phép xóa nhân viên vĩnh viễn!"
-            )
-            return
-
-        # =========================================================
-        # 2. CHỈ ĐƯỢC XÓA NHÂN VIÊN ĐÃ NGHỈ VIỆC
-        # =========================================================
-        if trang_thai != "Đã nghỉ việc":
+        if trang_thai != STATUS_RESIGNED:
             messagebox.showwarning(
                 "Không thể xóa",
                 "Chỉ có thể xóa vĩnh viễn nhân viên đã nghỉ việc.\n\n"
@@ -1397,13 +1977,13 @@ class EmployeeManagementForm:
         # 3. XÁC NHẬN
         # =========================================================
         confirm = messagebox.askyesno(
-            "⚠️ Xác nhận xóa vĩnh viễn",
+            "Xác nhận xóa vĩnh viễn",
             f"Bạn có chắc chắn muốn xóa:\n\n"
             f"{ho_ten} ({ma_nv})\n\n"
             f"khỏi hệ thống không?\n\n"
-            f"⚠ Tài khoản đăng nhập sẽ bị xóa hoàn toàn.\n"
-            f"⚠ Dữ liệu lương liên quan có thể bị xóa.\n"
-            f"⚠ Thao tác này không thể hoàn tác."
+            f"- Tài khoản đăng nhập sẽ bị xóa hoàn toàn.\n"
+            f"- Chỉ được xóa khi nhân viên chưa có lịch sử lương.\n"
+            f"- Thao tác này không thể hoàn tác."
         )
 
         if not confirm:
@@ -1418,44 +1998,56 @@ class EmployeeManagementForm:
 
         try:
             cursor = conn.cursor()
-
-            # =====================================================
-            # 4. LẤY ID TÀI KHOẢN CỦA NHÂN VIÊN
-            # =====================================================
-            cursor.execute(
-                """
-                SELECT nguoi_dung_id
-                FROM nhan_vien
-                WHERE ma_nv = %s
-                """,
-                (ma_nv,)
+            employee, permission_error = self.get_employee_for_update(
+                cursor, ma_nv
             )
-
-            result = cursor.fetchone()
-
-            if not result:
-                messagebox.showwarning(
-                    "Không thể xóa",
-                    f"Không tìm thấy nhân viên {ma_nv}!"
-                )
+            if permission_error:
                 conn.rollback()
+                messagebox.showwarning("Không thể xóa", permission_error)
                 return
 
-            nguoi_dung_id = result[0]
+            nguoi_dung_id = employee[2]
+            if employee[3] != STATUS_RESIGNED:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Không thể xóa",
+                    "Nhân viên chưa ở trạng thái 'Đã nghỉ việc'.",
+                )
+                return
 
-            # =====================================================
-            # 5. XÓA NHÂN VIÊN
-            #
-            # Xóa nhân viên trước để không còn FK tham chiếu
-            # đến tài khoản.
-            # =====================================================
+            is_current_user = (
+                nguoi_dung_id is not None
+                and str(nguoi_dung_id) == str(self.user_db_id)
+            ) or ma_nv in (self.user_actual_ma_nv, self.user_login_name)
+            if is_current_user:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Không có quyền",
+                    "Bạn không thể tự xóa hồ sơ và tài khoản của chính mình.",
+                )
+                return
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM bang_luong WHERE ma_nv = %s",
+                (ma_nv,),
+            )
+            payroll_count = cursor.fetchone()[0]
+            if payroll_count > 0:
+                conn.rollback()
+                messagebox.showwarning(
+                    "Không thể xóa",
+                    f"Nhân viên có {payroll_count} bảng lương cần được bảo toàn. "
+                    "Hãy giữ hồ sơ ở trạng thái 'Đã nghỉ việc'.",
+                )
+                return
+
             cursor.execute(
                 """
                 DELETE FROM nhan_vien
                 WHERE ma_nv = %s
-                AND trang_thai = 'Đã nghỉ việc'
+                AND trang_thai = %s
                 """,
-                (ma_nv,)
+                (ma_nv, STATUS_RESIGNED),
             )
 
             if cursor.rowcount == 0:
@@ -1468,11 +2060,6 @@ class EmployeeManagementForm:
                 )
                 return
 
-            # =====================================================
-            # 6. XÓA TÀI KHOẢN ĐĂNG NHẬP
-            #
-            # Đây là phần code cũ của bạn đang thiếu.
-            # =====================================================
             if nguoi_dung_id is not None:
                 cursor.execute(
                     """
@@ -1482,29 +2069,21 @@ class EmployeeManagementForm:
                     (nguoi_dung_id,)
                 )
 
-            # =====================================================
-            # 7. HOÀN TẤT
-            # =====================================================
             conn.commit()
 
             messagebox.showinfo(
                 "Thành công",
                 f"Đã xóa vĩnh viễn nhân viên:\n\n"
                 f"{ho_ten} ({ma_nv})\n\n"
-                f"✓ Hồ sơ nhân viên đã xóa\n"
-                f"✓ Tài khoản đăng nhập đã xóa"
+                f"Hồ sơ nhân viên đã xóa.\n"
+                f"Tài khoản đăng nhập đã xóa."
             )
 
-            self.load_data()
             self.lam_moi()
 
         except Error as e:
             conn.rollback()
-
-            messagebox.showerror(
-                "Lỗi CSDL",
-                f"Không thể xóa nhân viên và tài khoản!\n\n{e}"
-            )
+            self.show_operation_error("xóa nhân viên và tài khoản", e)
 
         finally:
             if cursor:
@@ -1516,21 +2095,31 @@ class EmployeeManagementForm:
         if not keyword or keyword == self.placeholder_text:
             self.load_data()
             return
+        if not self.can_manage_employees():
+            self.refresh_table([])
+            return
+        if self.role == ROLE_MANAGER and not self.user_ma_phong_ban:
+            self.refresh_table([])
+            return
+
         conn = get_db_connection()
         if not conn:
             return
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             p = f"%{keyword}%"
 
-            if self.role == "TruongPhong" and self.user_ma_phong_ban:
+            if self.role == ROLE_MANAGER:
                 query = """
                     SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh, nv.email, nv.sdt, 
                            pb.ten_phong_ban, cv.ten_chuc_vu, nv.luong_co_ban, nv.trang_thai
                     FROM nhan_vien nv
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
                     LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
-                    WHERE nv.ma_phong_ban = %s AND (nv.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR nv.sdt LIKE %s)
+                    WHERE nv.ma_phong_ban = %s
+                      AND (nv.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR nv.sdt LIKE %s)
+                    ORDER BY nv.ma_nv ASC
                 """
                 cursor.execute(query, (self.user_ma_phong_ban, p, p, p))
             else:
@@ -1541,16 +2130,22 @@ class EmployeeManagementForm:
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
                     LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
                     WHERE nv.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR nv.sdt LIKE %s
+                    ORDER BY nv.ma_nv ASC
                 """
                 cursor.execute(query, (p, p, p))
 
             self.refresh_table(cursor.fetchall())
         except Error as e:
-            messagebox.showerror("Lỗi", str(e))
+            self.show_operation_error("tìm kiếm nhân viên", e)
         finally:
+            if cursor:
+                cursor.close()
             conn.close()
 
     def lam_moi(self):
+        self.selected_ma_nv = None
+        self.generated_ma_nv = None
+        self.entry_ma_nv.config(state="normal")
         self.var_ten_nv.set("")
         self.var_gioi_tinh.set("Nam")
         self.var_ngay_sinh.set("01/01/1995")
@@ -1558,12 +2153,12 @@ class EmployeeManagementForm:
         self.var_sdt.set("")
 
         # NẾU LÀ TRƯỜNG PHÒNG: TỰ ĐỘNG GIỮ NGUYÊN PHÒNG BAN VÀ KHÔNG CHO ĐỔI
-        if self.role == "TruongPhong" and self.user_ma_phong_ban:
+        if self.role == ROLE_MANAGER and self.user_ma_phong_ban:
             for ten_pb, ma_pb in self.dict_phong_ban.items():
                 if ma_pb == self.user_ma_phong_ban:
                     self.var_phong_ban.set(ten_pb)
                     break
-        elif self.dict_phong_ban:
+        elif self.role == ROLE_ADMIN and self.dict_phong_ban:
             self.cb_pb.current(0)
 
         self.generate_employee_id()
@@ -1572,13 +2167,15 @@ class EmployeeManagementForm:
             self.cb_cv.current(0)
 
         self.var_luong_cb.set("12.000.000")
-        self.var_trang_thai.set("Đang làm việc")
+        self.var_trang_thai.set(STATUS_WORKING)
         self.load_data()
 
     def on_double_click(self, event):
         self.on_tree_select(event)
 
     def show_context_menu(self, event):
+        if not self.can_manage_employees():
+            return
         item = self.tree.identify_row(event.y)
         if item:
             self.tree.selection_set(item)
@@ -1602,10 +2199,12 @@ class EmployeeManagementForm:
         selected = self.tree.selection()
         if not selected:
             return
-        vals = self.tree.item(selected, "values")
+        vals = self.tree.item(selected[0], "values")
         row_data = dict(zip(self.columns_def, vals))
+        self.selected_ma_nv = row_data["ma_nv"]
+        self.generated_ma_nv = None
 
-        if self.role == "TruongPhong" and (
+        if self.role == ROLE_MANAGER and (
             row_data["ma_nv"] == self.user_actual_ma_nv
             or row_data["ma_nv"] == self.user_login_name
         ):
@@ -1617,6 +2216,7 @@ class EmployeeManagementForm:
             )
 
         self.var_ma_nv.set(row_data["ma_nv"])
+        self.entry_ma_nv.config(state="readonly")
         self.var_ten_nv.set(row_data["ten_nv"])
         self.var_gioi_tinh.set(row_data["gioi_tinh"])
         self.var_ngay_sinh.set(row_data["ngay_sinh"])

@@ -4,6 +4,8 @@ from tkinter import messagebox, ttk
 
 from db_connection import get_db_connection
 from mysql.connector import Error
+from ui_icons import icon_button
+from user_error import show_database_error
 
 
 class AccountManagementForm:
@@ -102,9 +104,10 @@ class AccountManagementForm:
             padx=8
         )
 
-        tk.Button(
+        icon_button(
             search_frame,
-            text="🔍 Tìm",
+            text="Tìm",
+            icon="search",
             bg="#2563eb",
             fg="white",
             bd=0,
@@ -113,9 +116,10 @@ class AccountManagementForm:
             command=self.search_accounts
         ).pack(side=tk.LEFT)
 
-        tk.Button(
+        icon_button(
             search_frame,
-            text="🔄 Làm mới",
+            text="Làm mới",
+            icon="refresh",
             bg="#64748b",
             fg="white",
             bd=0,
@@ -422,9 +426,10 @@ class AccountManagementForm:
             pady=12
         )
 
-        tk.Button(
+        icon_button(
             button_frame,
-            text="💾 Lưu thay đổi",
+            text="Lưu thay đổi",
+            icon="save",
             bg="#2563eb",
             fg="white",
             bd=0,
@@ -436,9 +441,10 @@ class AccountManagementForm:
             padx=5
         )
 
-        tk.Button(
+        icon_button(
             button_frame,
-            text="🔑 Reset mật khẩu",
+            text="Reset mật khẩu",
+            icon="key",
             bg="#f59e0b",
             fg="white",
             bd=0,
@@ -450,9 +456,10 @@ class AccountManagementForm:
             padx=5
         )
 
-        tk.Button(
+        icon_button(
             button_frame,
-            text="🔒 Khóa tài khoản",
+            text="Khóa tài khoản",
+            icon="lock",
             bg="#dc2626",
             fg="white",
             bd=0,
@@ -464,9 +471,10 @@ class AccountManagementForm:
             padx=5
         )
 
-        tk.Button(
+        icon_button(
             button_frame,
-            text="🔓 Mở khóa",
+            text="Mở khóa",
+            icon="unlock",
             bg="#16a34a",
             fg="white",
             bd=0,
@@ -518,10 +526,7 @@ class AccountManagementForm:
 
         except Error as e:
 
-            messagebox.showerror(
-                "Lỗi CSDL",
-                str(e)
-            )
+            show_database_error(e, "tải danh sách tài khoản")
 
         finally:
             conn.close()
@@ -665,10 +670,7 @@ class AccountManagementForm:
 
         except Error as e:
 
-            messagebox.showerror(
-                "Lỗi",
-                str(e)
-            )
+            show_database_error(e, "tìm kiếm tài khoản")
 
         finally:
             conn.close()
@@ -745,9 +747,13 @@ class AccountManagementForm:
 
             conn.rollback()
 
-            messagebox.showerror(
-                "Lỗi CSDL",
-                str(e)
+            show_database_error(
+                e,
+                "cập nhật tài khoản",
+                duplicate_message=(
+                    "Tên đăng nhập hoặc email đã được sử dụng. "
+                    "Vui lòng nhập thông tin khác."
+                ),
             )
 
         finally:
@@ -814,10 +820,7 @@ class AccountManagementForm:
 
             conn.rollback()
 
-            messagebox.showerror(
-                "Lỗi CSDL",
-                str(e)
-            )
+            show_database_error(e, "đặt lại mật khẩu")
 
         finally:
             conn.close()
@@ -926,10 +929,7 @@ class AccountManagementForm:
 
             conn.rollback()
 
-            messagebox.showerror(
-                "Lỗi CSDL",
-                str(e)
-            )
+            show_database_error(e, "thay đổi trạng thái tài khoản")
 
         finally:
             conn.close()
