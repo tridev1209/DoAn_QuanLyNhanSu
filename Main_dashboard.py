@@ -1,4 +1,3 @@
-import hashlib
 import tkinter as tk
 from tkinter import messagebox, ttk
 from db_connection import get_db_connection
@@ -6,6 +5,8 @@ from mysql.connector import Error
 from ui_icons import get_icon, icon_button, icon_label
 from user_error import show_database_error
 
+
+MAX_FAILED_LOGIN_ATTEMPTS = 5
 
 
 def init_db():
@@ -24,9 +25,23 @@ def init_db():
                 email VARCHAR(100) NOT NULL UNIQUE,
                 vai_tro ENUM('Admin', 'TruongPhong', 'NhanVien') NOT NULL DEFAULT 'NhanVien',
                 trang_thai TINYINT(1) DEFAULT 1,
+                so_lan_dang_nhap_sai INT UNSIGNED NOT NULL DEFAULT 0,
                 ngay_tao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB;
         """)
+
+        # Bổ sung bộ đếm cho các CSDL đã được tạo từ phiên bản cũ.
+        cursor.execute(
+            "SHOW COLUMNS FROM nguoi_dung LIKE 'so_lan_dang_nhap_sai'"
+        )
+        if not cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE nguoi_dung
+                ADD COLUMN so_lan_dang_nhap_sai INT UNSIGNED NOT NULL DEFAULT 0
+                """
+            )
+        conn.commit()
 
       
     except Error as e:
@@ -87,7 +102,14 @@ class ForgotPasswordWindow(tk.Toplevel):
                 row = cursor.fetchone()
                 if row:
                     # Lưu trực tiếp chuỗi new_pw xuống CSDL
-                    cursor.execute("UPDATE nguoi_dung SET mat_khau = %s WHERE id = %s", (new_pw, row["id"]))
+                    cursor.execute(
+                        """
+                        UPDATE nguoi_dung
+                        SET mat_khau = %s, so_lan_dang_nhap_sai = 0
+                        WHERE id = %s
+                        """,
+                        (new_pw, row["id"]),
+                    )
                     conn.commit()
                     messagebox.showinfo("Thành công", f"Đổi mật khẩu thành công!\nMật khẩu mới là: {new_pw}", parent=self)
                     self.destroy()
@@ -166,16 +188,67 @@ class LoginForm:
 
         try:
             cursor = conn.cursor(dictionary=True)
-            # So sánh trực tiếp password với CSDL
-            cursor.execute("SELECT id, ten_dang_nhap, ho_ten, email, vai_tro, trang_thai FROM nguoi_dung WHERE ten_dang_nhap = %s AND mat_khau = %s", (username, password))
+            cursor.execute(
+                """
+                SELECT id, ten_dang_nhap, mat_khau, ho_ten, email, vai_tro,
+                       trang_thai, so_lan_dang_nhap_sai
+                FROM nguoi_dung
+                WHERE ten_dang_nhap = %s
+                FOR UPDATE
+                """,
+                (username,),
+            )
             row = cursor.fetchone()
 
             if row:
                 if row["trang_thai"] == 0:
                     messagebox.showerror("Lỗi", "Tài khoản đã bị khóa!")
                     return
-                self.user_info = row
-                self.root.destroy()
+
+                # Luồng hiện tại lưu và so sánh trực tiếp chuỗi mật khẩu.
+                if row["mat_khau"] == password:
+                    if row["so_lan_dang_nhap_sai"]:
+                        cursor.execute(
+                            """
+                            UPDATE nguoi_dung
+                            SET so_lan_dang_nhap_sai = 0
+                            WHERE id = %s
+                            """,
+                            (row["id"],),
+                        )
+                        conn.commit()
+
+                    row.pop("mat_khau", None)
+                    row.pop("so_lan_dang_nhap_sai", None)
+                    self.user_info = row
+                    self.root.destroy()
+                else:
+                    failed_attempts = int(row["so_lan_dang_nhap_sai"] or 0) + 1
+                    is_locked = failed_attempts >= MAX_FAILED_LOGIN_ATTEMPTS
+                    cursor.execute(
+                        """
+                        UPDATE nguoi_dung
+                        SET so_lan_dang_nhap_sai = %s,
+                            trang_thai = %s
+                        WHERE id = %s
+                        """,
+                        (failed_attempts, 0 if is_locked else 1, row["id"]),
+                    )
+                    conn.commit()
+
+                    if is_locked:
+                        messagebox.showerror(
+                            "Tài khoản đã bị khóa",
+                            "Bạn đã nhập sai mật khẩu 5 lần. "
+                            "Vui lòng liên hệ Admin để mở khóa tài khoản.",
+                        )
+                    else:
+                        remaining = MAX_FAILED_LOGIN_ATTEMPTS - failed_attempts
+                        messagebox.showerror(
+                            "Lỗi",
+                            "Sai tên đăng nhập hoặc mật khẩu! "
+                            f"Tài khoản sẽ bị khóa sau {remaining} lần nhập sai nữa.",
+                        )
             else:
                 messagebox.showerror("Lỗi", "Sai tên đăng nhập hoặc mật khẩu!")
         except Error as e:

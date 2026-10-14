@@ -1784,17 +1784,25 @@ class EmployeeManagementForm:
                 cursor.execute(
                     """
                     UPDATE nguoi_dung
-                    SET ho_ten=%s, email=%s, vai_tro=%s, trang_thai=%s
+                    SET ho_ten=%s, email=%s, vai_tro=%s
                     WHERE id=%s
                     """,
                     (
                         ten,
                         email,
                         vai_tro,
-                        self.account_status_from_employee_status(trang_thai),
                         employee_user_id,
                     ),
                 )
+                if trang_thai == STATUS_RESIGNED:
+                    cursor.execute(
+                        """
+                        UPDATE nguoi_dung
+                        SET trang_thai=0
+                        WHERE id=%s
+                        """,
+                        (employee_user_id,),
+                    )
 
             conn.commit()
 

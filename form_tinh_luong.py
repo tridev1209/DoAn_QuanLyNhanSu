@@ -912,12 +912,25 @@ class PayrollManagementForm:
 
         return "break"
     def on_hours_key_release(self, event, var):
-        """Cho phép nhập số giờ OT (số nguyên hoặc số thập phân như 10 hay 12.5)"""
         raw = str(var.get())
+
+        # Chỉ cho phép số và dấu chấm
         cleaned = re.sub(r"[^0-9.]", "", raw)
+
+        # Chỉ giữ 1 dấu chấm thập phân
         if cleaned.count(".") > 1:
-            parts = cleaned.split(".")
-            cleaned = parts + "." + "".join(parts[1:])
+            first_dot = cleaned.find(".")
+            cleaned = (
+                cleaned[:first_dot + 1]
+                + cleaned[first_dot + 1:].replace(".", "")
+            )
+
+        # Giới hạn tối đa 1 chữ số thập phân
+        if "." in cleaned:
+            integer_part, decimal_part = cleaned.split(".", 1)
+            decimal_part = decimal_part[:1]
+            cleaned = integer_part + "." + decimal_part
+
         var.set(cleaned)
         event.widget.icursor(tk.END)
         self.tinh_luong()
