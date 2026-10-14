@@ -11,6 +11,20 @@ from user_error import show_database_error, show_file_error
 
 class PayrollManagementForm:
 
+    STANDARD_WORK_DAYS = 24
+    HOURS_PER_DAY = 8
+    OT_RATE = 1.5
+    MAX_OT_HOURS = 40.0
+    MIN_PAYROLL_YEAR = 2000
+    # Dùng khi chuc_vu.phu_cap chưa được cấu hình (đang bằng 0 trong CSDL).
+    # Nếu CSDL có mức phụ cấp lớn hơn 0 thì luôn ưu tiên mức trong CSDL.
+    DEFAULT_POSITION_ALLOWANCES = {
+        "CV01": 2_000_000,
+        "CV02": 1_000_000,
+        "CV03": 500_000,
+        "CV04": 0,
+    }
+
     def __init__(self, parent_frame, user_info=None):
         self.parent = parent_frame
         # Dữ liệu tài khoản đăng nhập (Mặc định Admin nếu chạy test độc lập)
@@ -46,7 +60,7 @@ class PayrollManagementForm:
         self.var_thuc_nhan = tk.StringVar(value="0 đ")
         self.var_tim_kiem = tk.StringVar()
 
-        self.dict_nhan_vien = {}  # ma_nv -> (ho_ten, luong_cb)
+        self.dict_nhan_vien = {}  # ma_nv -> (ho_ten, luong_cb, phu_cap)
         self.all_employee_display_list = []
         # Popup tìm kiếm nhân viên
         self.employee_popup = None
@@ -136,24 +150,64 @@ class PayrollManagementForm:
                 font=("Helvetica", 10, "bold"),
             ).grid(row=0, column=0, sticky="w", pady=5)
 
-            # Ô tìm kiếm nhân viên
-            self.cb_ma_nv = tk.Entry(
+            # Ô chọn nhân viên có tìm kiếm và nút xổ danh sách.
+            self.employee_picker_frame = tk.Frame(
                 self.input_frame,
-                textvariable=self.var_ma_nv,
-                width=34,
-                font=("Helvetica", 10),
-                relief="solid",
-                bd=1,
+                bg="white",
+                highlightbackground="#cbd5e1",
+                highlightcolor="#2563eb",
+                highlightthickness=1,
             )
-
-            self.cb_ma_nv.grid(
+            self.employee_picker_frame.grid(
                 row=0,
                 column=1,
                 columnspan=2,
                 padx=5,
                 pady=5,
-                sticky="w"
+                sticky="w",
             )
+
+            self.cb_ma_nv = tk.Entry(
+                self.employee_picker_frame,
+                textvariable=self.var_ma_nv,
+                width=30,
+                font=("Helvetica", 10),
+                relief="flat",
+                bd=0,
+            )
+            self.cb_ma_nv.pack(
+                side=tk.LEFT,
+                padx=(8, 4),
+                pady=5,
+            )
+            self.employee_placeholder_label = tk.Label(
+                self.employee_picker_frame,
+                text="Gõ mã hoặc tên nhân viên...",
+                bg="white",
+                fg="#94a3b8",
+                font=("Helvetica", 10),
+                cursor="xterm",
+            )
+            self.employee_placeholder_label.place(
+                x=9, rely=0.5, anchor="w"
+            )
+            self.employee_placeholder_label.bind(
+                "<Button-1>", self.focus_employee_picker
+            )
+            tk.Button(
+                self.employee_picker_frame,
+                text="⌄",
+                font=("Helvetica", 11, "bold"),
+                fg="#475569",
+                bg="white",
+                activebackground="#eff6ff",
+                activeforeground="#2563eb",
+                relief="flat",
+                bd=0,
+                width=3,
+                cursor="hand2",
+                command=self.show_all_employee_options,
+            ).pack(side=tk.RIGHT, fill=tk.Y)
 
             # Gõ tới đâu tìm kiếm tới đó
             self.cb_ma_nv.bind(
@@ -181,7 +235,19 @@ class PayrollManagementForm:
                 "<Escape>",
                 self.on_employee_escape
             )
-            self.cb_ma_nv.bind("<Return>", self.on_employee_enter)
+            self.cb_ma_nv.bind("<FocusIn>", self.on_employee_focus_in)
+            self.cb_ma_nv.bind("<FocusOut>", self.on_employee_focus_out)
+
+            # Sự kiện đi qua cửa sổ chính; click vào popup không bị đóng nhầm.
+            self._outside_click_root = self.parent.winfo_toplevel()
+            self._outside_click_bind_id = self._outside_click_root.bind(
+                "<Button-1>",
+                self.on_click_outside_employee_picker,
+                add="+",
+            )
+            self.input_frame.bind(
+                "<Destroy>", self.on_employee_picker_destroy, add="+"
+            )
 
             tk.Label(
                 self.input_frame,
@@ -223,7 +289,11 @@ class PayrollManagementForm:
             entry_nam.pack(side=tk.LEFT)
             entry_nam.bind(
                 "<KeyRelease>",
-                lambda e: self.on_digits_only_key_release(e, self.var_nam),
+                lambda e: self.on_digits_only_key_release(
+                    e,
+                    self.var_nam,
+                    max_val=datetime.datetime.now().year,
+                ),
             )
 
             # Hàng 1: Lương CB, Số ngày công, Số giờ OT
@@ -287,7 +357,7 @@ class PayrollManagementForm:
             # Hàng 2: Phụ cấp, Khoản trừ, Lương thực nhận
             tk.Label(
                 self.input_frame,
-                text="Phụ cấp (đ):",
+                text="Phụ cấp chức vụ (đ):",
                 bg="#f8fafc",
                 font=("Helvetica", 10),
             ).grid(row=2, column=0, sticky="w", pady=5)
@@ -295,13 +365,11 @@ class PayrollManagementForm:
                 self.input_frame,
                 textvariable=self.var_phu_cap,
                 width=22,
+                state="readonly",
+                readonlybackground="#e2e8f0",
                 font=("Helvetica", 10),
             )
             entry_phu_cap.grid(row=2, column=1, padx=5, pady=5, sticky="w")
-            entry_phu_cap.bind(
-                "<KeyRelease>",
-                lambda e: self.on_money_key_release(e, self.var_phu_cap),
-            )
 
             tk.Label(
                 self.input_frame,
@@ -318,7 +386,7 @@ class PayrollManagementForm:
             entry_khoan_tru.grid(row=2, column=3, padx=5, pady=5, sticky="w")
             entry_khoan_tru.bind(
                 "<KeyRelease>",
-                lambda e: self.on_money_key_release(e, self.var_khoan_tru),
+                self.on_deduction_key_release,
             )
 
             tk.Label(
@@ -468,6 +536,7 @@ class PayrollManagementForm:
             self.entry_tim_kiem.insert(0, self.placeholder_text)
             self.entry_tim_kiem.bind("<FocusIn>", self.on_search_focus_in)
             self.entry_tim_kiem.bind("<FocusOut>", self.on_search_focus_out)
+            self.entry_tim_kiem.bind("<Return>", self.on_search_enter)
 
             icon_button(
                 search_sub_frame,
@@ -507,6 +576,7 @@ class PayrollManagementForm:
             "thang_nam",
             "luong_cb",
             "ngay_cong",
+            "gio_ot",
             "luong_ot",
             "phu_cap",
             "khoan_tru",
@@ -539,6 +609,7 @@ class PayrollManagementForm:
             "thang_nam": "Tháng/Năm",
             "luong_cb": "Lương CB (đ)",
             "ngay_cong": "Ngày công",
+            "gio_ot": "Giờ OT",
             "luong_ot": "Lương OT (đ)",
             "phu_cap": "Phụ cấp (đ)",
             "khoan_tru": "Khoản trừ (đ)",
@@ -550,6 +621,7 @@ class PayrollManagementForm:
             "thang_nam": 90,
             "luong_cb": 120,
             "ngay_cong": 85,
+            "gio_ot": 75,
             "luong_ot": 110,
             "phu_cap": 110,
             "khoan_tru": 110,
@@ -559,7 +631,7 @@ class PayrollManagementForm:
         for col in self.columns_def:
             col_anchor = (
                 tk.CENTER
-                if col in ("ma_nv", "thang_nam", "ngay_cong")
+                if col in ("ma_nv", "thang_nam", "ngay_cong", "gio_ot")
                 else (tk.W if col == "ten_nv" else tk.E)
             )
             self.tree.heading(col, text=headers[col], anchor=col_anchor)
@@ -590,27 +662,119 @@ class PayrollManagementForm:
         # Không có nội dung -> đóng popup
         if not text:
             self.hide_employee_popup()
-            self.var_ten_nv.set("")
-            self.var_luong_cb.set("0")
+            self.clear_employee_details()
             return
 
-        # Tìm theo mã NV hoặc họ tên
-        filtered = [
-            item
-            for item in self.all_employee_display_list
-            if text in item.lower()
-        ]
+        ma_nv = self.get_selected_ma_nv()
+        employee = self.dict_nhan_vien.get(ma_nv)
+        canonical_value = (
+            f"{ma_nv} - {employee[0]}".lower() if employee else ""
+        )
+        if text != canonical_value:
+            self.clear_employee_details()
+
+        filtered = self.filter_employee_options(text)
 
         # Không tìm thấy
         if not filtered:
             self.hide_employee_popup()
+            self.clear_employee_details()
             return
 
         # Không cho popup quá dài
         filtered = filtered[:12]
 
         self.show_employee_popup(filtered)
-    
+
+    def on_employee_focus_in(self, event=None):
+        self.employee_picker_frame.config(highlightbackground="#2563eb")
+        self.employee_placeholder_label.place_forget()
+        if not self.var_ma_nv.get().strip():
+            self.show_all_employee_options()
+
+    def on_employee_focus_out(self, event=None):
+        self.employee_picker_frame.config(highlightbackground="#cbd5e1")
+        self.parent.after_idle(self.update_employee_placeholder)
+
+    def focus_employee_picker(self, event=None):
+        self.cb_ma_nv.focus_set()
+
+    def update_employee_placeholder(self):
+        if (
+            not self.var_ma_nv.get().strip()
+            and self.cb_ma_nv.focus_get() != self.cb_ma_nv
+        ):
+            self.employee_placeholder_label.place(x=9, rely=0.5, anchor="w")
+        else:
+            self.employee_placeholder_label.place_forget()
+
+    def filter_employee_options(self, keyword):
+        """Ưu tiên lọc mã bắt đầu bằng từ khóa, sau đó mới tìm rộng."""
+        query = keyword.strip().casefold()
+        if not query:
+            return list(self.all_employee_display_list)
+
+        employees = []
+        for display in self.all_employee_display_list:
+            employee_code, _, employee_name = display.partition(" - ")
+            employees.append(
+                (display, employee_code.casefold(), employee_name.casefold())
+            )
+
+        code_prefix_matches = [
+            display
+            for display, employee_code, _ in employees
+            if employee_code.startswith(query)
+        ]
+        if code_prefix_matches:
+            return code_prefix_matches
+
+        return [
+            display
+            for display, employee_code, employee_name in employees
+            if query in employee_code or query in employee_name
+        ]
+
+    def clear_employee_details(self):
+        self.var_ten_nv.set("")
+        self.var_luong_cb.set("0")
+        self.var_phu_cap.set("0")
+        self.tinh_luong()
+
+    def show_all_employee_options(self):
+        if not self.all_employee_display_list:
+            return
+        self.cb_ma_nv.focus_set()
+        self.show_employee_popup(self.all_employee_display_list[:12])
+
+    def on_click_outside_employee_picker(self, event):
+        widget = event.widget
+        while widget is not None:
+            if widget in (self.employee_picker_frame, self.employee_popup):
+                return
+            widget = getattr(widget, "master", None)
+        self.hide_employee_popup()
+        self.update_employee_placeholder()
+
+    def on_employee_picker_destroy(self, event):
+        if event.widget is not self.input_frame:
+            return
+        bind_id = getattr(self, "_outside_click_bind_id", None)
+        root = getattr(self, "_outside_click_root", None)
+        if bind_id and root:
+            try:
+                root.unbind("<Button-1>", bind_id)
+            except tk.TclError:
+                pass
+            self._outside_click_bind_id = None
+        if self.employee_popup is not None:
+            try:
+                self.employee_popup.destroy()
+            except tk.TclError:
+                pass
+            self.employee_popup = None
+            self.employee_popup_tree = None
+
     def show_employee_popup(self, values):
         """
         Hiển thị popup danh sách nhân viên
@@ -642,10 +806,7 @@ class PayrollManagementForm:
                 selectmode="browse"
             )
 
-            self.employee_popup_tree.heading(
-                "ma_nv",
-                text="Mã NV"
-            )
+            self.employee_popup_tree.heading("ma_nv", text="Mã nhân viên")
 
             self.employee_popup_tree.heading(
                 "ho_ten",
@@ -700,7 +861,7 @@ class PayrollManagementForm:
         for item in self.employee_popup_tree.get_children():
             self.employee_popup_tree.delete(item)
         # Thêm kết quả mới
-        for display in values:
+        for index, display in enumerate(values):
 
             if " - " in display:
                 ma_nv, ho_ten = display.split(
@@ -714,31 +875,34 @@ class PayrollManagementForm:
             self.employee_popup_tree.insert(
                 "",
                 tk.END,
-                values=(ma_nv, ho_ten)
+                values=(ma_nv, ho_ten),
+                tags=("even" if index % 2 == 0 else "odd",),
             )
-         # Vị trí Entry trên màn hình
-        x = self.cb_ma_nv.winfo_rootx()
+        self.employee_popup_tree.tag_configure("even", background="#ffffff")
+        self.employee_popup_tree.tag_configure("odd", background="#f8fafc")
+        # Vị trí và kích thước bám theo toàn bộ khung chọn nhân viên.
+        self.employee_picker_frame.update_idletasks()
+        x = self.employee_picker_frame.winfo_rootx()
         y = (
-            self.cb_ma_nv.winfo_rooty()
-            + self.cb_ma_nv.winfo_height()
+            self.employee_picker_frame.winfo_rooty()
+            + self.employee_picker_frame.winfo_height()
         )
 
-        width = self.cb_ma_nv.winfo_width()
-
-        # Popup rộng hơn Entry một chút
-        popup_width = max(width, 330)
+        popup_width = max(self.employee_picker_frame.winfo_width(), 330)
+        popup_height = min(max(len(values), 1), 8) * 25 + 28
 
         self.employee_popup.geometry(
-            f"{popup_width}x205+{x}+{y}"
+            f"{popup_width}x{popup_height}+{x}+{y}"
         )
 
         self.employee_popup.deiconify()
         self.employee_popup.lift()
 
-        # KHÔNG tự chọn dòng đầu tiên
+        # Chỉ hiển thị kết quả; không tự chọn nhân viên đầu tiên.
         self.employee_popup_tree.selection_remove(
             self.employee_popup_tree.selection()
         )
+        self.employee_popup_tree.focus("")
     def hide_employee_popup(self):
         """
         Đóng popup tìm kiếm nhân viên.
@@ -778,6 +942,7 @@ class PayrollManagementForm:
         self.var_ma_nv.set(
             f"{ma_nv} - {ho_ten}"
         )
+        self.employee_placeholder_label.place_forget()
 
         # Đóng popup
         self.hide_employee_popup()
@@ -883,24 +1048,26 @@ class PayrollManagementForm:
         self.tinh_luong()
     def on_employee_enter(self, event=None):
         """
-        Nhấn Enter để chọn nhân viên đang được highlight.
+        Enter lần đầu mở danh sách đã lọc; chỉ chọn dòng đã highlight.
         """
 
-        if not self.employee_popup_tree:
-            return "break"
+        popup_visible = (
+            self.employee_popup_tree is not None
+            and self.employee_popup is not None
+            and self.employee_popup.winfo_viewable()
+        )
+        if popup_visible:
+            selected = self.employee_popup_tree.selection()
+            if selected:
+                self.on_employee_popup_click()
+                return "break"
 
-        if (
-            self.employee_popup is None
-            or not self.employee_popup.winfo_viewable()
-        ):
-            return "break"
-
-        selected = self.employee_popup_tree.selection()
-
-        if not selected:
-            return "break"
-
-        self.on_employee_popup_click()
+        keyword = self.var_ma_nv.get().strip()
+        filtered = self.filter_employee_options(keyword)[:12]
+        if filtered:
+            self.show_employee_popup(filtered)
+        else:
+            self.hide_employee_popup()
 
         return "break"
     def on_employee_escape(self, event=None):
@@ -931,6 +1098,10 @@ class PayrollManagementForm:
             decimal_part = decimal_part[:1]
             cleaned = integer_part + "." + decimal_part
 
+        if cleaned not in ("", "."):
+            value = min(float(cleaned), self.MAX_OT_HOURS)
+            cleaned = f"{value:.1f}".rstrip("0").rstrip(".")
+
         var.set(cleaned)
         event.widget.icursor(tk.END)
         self.tinh_luong()
@@ -948,6 +1119,17 @@ class PayrollManagementForm:
             event.widget.icursor(tk.END)
         self.tinh_luong()
 
+    def on_deduction_key_release(self, event):
+        """Định dạng và giới hạn khoản trừ không vượt tổng thu nhập."""
+        raw = str(self.var_khoan_tru.get())
+        digits = re.sub(r"\D", "", raw)
+        deduction = int(digits) if digits else 0
+        maximum = int(round(self.calculate_gross_income()))
+        deduction = min(deduction, maximum)
+        self.var_khoan_tru.set(self.format_money_str(deduction))
+        event.widget.icursor(tk.END)
+        self.tinh_luong()
+
     def on_search_focus_in(self, event):
         if self.entry_tim_kiem.get() == self.placeholder_text:
             self.entry_tim_kiem.delete(0, tk.END)
@@ -957,6 +1139,10 @@ class PayrollManagementForm:
         if not self.entry_tim_kiem.get().strip():
             self.entry_tim_kiem.insert(0, self.placeholder_text)
             self.entry_tim_kiem.config(fg="grey")
+
+    def on_search_enter(self, event=None):
+        self.tim_kiem()
+        return "break"
 
     def load_employee_combobox(self):
         """
@@ -978,19 +1164,22 @@ class PayrollManagementForm:
 
                 query = """
                     SELECT
-                        ma_nv,
-                        ho_ten,
-                        luong_co_ban
-                    FROM nhan_vien
-                    WHERE ma_phong_ban = %s
-                    AND (ma_nv != %s OR %s IS NULL)
+                        nv.ma_nv,
+                        nv.ho_ten,
+                        nv.luong_co_ban,
+                        nv.ma_chuc_vu,
+                        COALESCE(cv.phu_cap, 0) AS phu_cap
+                    FROM nhan_vien nv
+                    LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
+                    WHERE nv.ma_phong_ban = %s
+                    AND (nv.ma_nv != %s OR %s IS NULL)
                     AND (
-                        nguoi_dung_id != %s
+                        nv.nguoi_dung_id != %s
                         OR %s IS NULL
-                        OR nguoi_dung_id IS NULL
+                        OR nv.nguoi_dung_id IS NULL
                     )
-                    AND trang_thai <> 'Đã nghỉ việc'
-                    ORDER BY ma_nv ASC
+                    AND nv.trang_thai <> 'Đã nghỉ việc'
+                    ORDER BY nv.ma_nv ASC
                 """
 
                 cursor.execute(
@@ -1008,12 +1197,15 @@ class PayrollManagementForm:
 
                 query = """
                     SELECT
-                        ma_nv,
-                        ho_ten,
-                        luong_co_ban
-                    FROM nhan_vien
-                    WHERE trang_thai <> 'Đã nghỉ việc'
-                    ORDER BY ma_nv ASC
+                        nv.ma_nv,
+                        nv.ho_ten,
+                        nv.luong_co_ban,
+                        nv.ma_chuc_vu,
+                        COALESCE(cv.phu_cap, 0) AS phu_cap
+                    FROM nhan_vien nv
+                    LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
+                    WHERE nv.trang_thai <> 'Đã nghỉ việc'
+                    ORDER BY nv.ma_nv ASC
                 """
 
                 cursor.execute(query)
@@ -1024,7 +1216,10 @@ class PayrollManagementForm:
             self.dict_nhan_vien = {
                 row["ma_nv"]: (
                     row["ho_ten"],
-                    float(row["luong_co_ban"] or 0)
+                    float(row["luong_co_ban"] or 0),
+                    self.get_position_allowance(
+                        row["ma_chuc_vu"], row["phu_cap"]
+                    ),
                 )
                 for row in rows
             }
@@ -1042,6 +1237,7 @@ class PayrollManagementForm:
             self.var_luong_cb.set("0")
 
             self.hide_employee_popup()
+            self.update_employee_placeholder()
 
         except Error as e:
 
@@ -1050,12 +1246,38 @@ class PayrollManagementForm:
         finally:
             conn.close()
 
+    def get_position_allowance(self, position_code, database_allowance):
+        """Lấy một phụ cấp chức vụ, ưu tiên mức đã cấu hình trong CSDL."""
+        allowance = float(database_allowance or 0)
+        if allowance > 0:
+            return allowance
+        return float(self.DEFAULT_POSITION_ALLOWANCES.get(position_code, 0))
+
+    def calculate_gross_income(self):
+        """Tổng lương trước khoản trừ, dùng chung để giới hạn dữ liệu nhập."""
+        base_salary = self.parse_money(self.var_luong_cb.get())
+        work_days = int(self.parse_money(self.var_ngay_cong.get()))
+        allowance = self.parse_money(self.var_phu_cap.get())
+        try:
+            overtime_hours = float(self.var_gio_ot.get().strip() or 0)
+        except ValueError:
+            overtime_hours = 0.0
+        regular_salary = (base_salary / self.STANDARD_WORK_DAYS) * work_days
+        hourly_salary = base_salary / (
+            self.STANDARD_WORK_DAYS * self.HOURS_PER_DAY
+        )
+        overtime_salary = round(
+            overtime_hours * hourly_salary * self.OT_RATE, 2
+        )
+        return regular_salary + overtime_salary + allowance
+
     def on_employee_selected(self, event=None):
         ma = self.get_selected_ma_nv()
         if ma in self.dict_nhan_vien:
-            ten, luong_cb = self.dict_nhan_vien[ma]
+            ten, luong_cb, phu_cap = self.dict_nhan_vien[ma]
             self.var_ten_nv.set(ten)
             self.var_luong_cb.set(self.format_money_str(luong_cb))
+            self.var_phu_cap.set(self.format_money_str(phu_cap))
             self.tinh_luong()
 
     def tinh_luong(self):
@@ -1072,14 +1294,18 @@ class PayrollManagementForm:
             phu_cap = self.parse_money(self.var_phu_cap.get())
             khoan_tru = self.parse_money(self.var_khoan_tru.get())
 
-            # Tính lương 1 giờ công tiêu chuẩn (1 tháng 24 ngày, 8 giờ/ngày = 192 giờ)
-            luong_1_gio = (luong_cb / 24.0) / 8.0 if luong_cb > 0 else 0.0
+            # Một mô hình thống nhất: 24 ngày công, 8 giờ/ngày, OT hệ số 1,5.
+            luong_1_gio = (
+                luong_cb / (self.STANDARD_WORK_DAYS * self.HOURS_PER_DAY)
+                if luong_cb > 0
+                else 0.0
+            )
 
             # Tiền Lương OT với hệ số làm thêm 1.5
-            tien_luong_ot = gio_ot * luong_1_gio * 1.5
+            tien_luong_ot = round(gio_ot * luong_1_gio * self.OT_RATE, 2)
 
             # Lương chính theo ngày công thực tế
-            luong_chinh = (luong_cb / 24.0) * ngay_cong
+            luong_chinh = (luong_cb / self.STANDARD_WORK_DAYS) * ngay_cong
 
             thuc_nhan = luong_chinh + tien_luong_ot + phu_cap - khoan_tru
             if thuc_nhan < 0:
@@ -1103,6 +1329,15 @@ class PayrollManagementForm:
             messagebox.showwarning("Cảnh báo", "Vui lòng chọn Nhân viên!")
             return
 
+        if ma_nv not in self.dict_nhan_vien:
+            messagebox.showwarning(
+                "Cảnh báo", "Vui lòng chọn nhân viên hợp lệ từ danh sách!"
+            )
+            return
+
+        # Cho phép gõ đúng mã rồi bấm Lưu mà không bắt buộc chọn bằng chuột.
+        self.on_employee_selected()
+
         if self.role == "TruongPhong" and (
             ma_nv == self.user_actual_ma_nv or ma_nv == self.user_login_name
         ):
@@ -1118,44 +1353,107 @@ class PayrollManagementForm:
             messagebox.showwarning("Cảnh báo", "Tháng phải từ 1 đến 12!")
             return
 
-        thuc_nhan_val, tien_luong_ot_val = self.tinh_luong()
+        current_year = datetime.datetime.now().year
+        if not (self.MIN_PAYROLL_YEAR <= nam <= current_year):
+            messagebox.showwarning(
+                "Cảnh báo",
+                f"Năm phải từ {self.MIN_PAYROLL_YEAR} đến {current_year}!",
+            )
+            return
+
+        ngay_cong = int(self.parse_money(self.var_ngay_cong.get()))
+        if not (0 <= ngay_cong <= self.STANDARD_WORK_DAYS):
+            messagebox.showwarning(
+                "Cảnh báo",
+                f"Số ngày công phải từ 0 đến {self.STANDARD_WORK_DAYS}!",
+            )
+            return
+
+        try:
+            gio_ot = float(self.var_gio_ot.get().strip() or 0)
+        except ValueError:
+            messagebox.showwarning("Cảnh báo", "Số giờ OT không hợp lệ!")
+            return
+        if not (0 <= gio_ot <= self.MAX_OT_HOURS):
+            messagebox.showwarning(
+                "Cảnh báo",
+                f"Số giờ OT phải từ 0 đến {self.MAX_OT_HOURS:g} giờ/tháng!",
+            )
+            return
+
+        # Không tin dữ liệu từ ô nhập: phụ cấp luôn lấy theo chức vụ đã nạp từ CSDL.
+        phu_cap = self.dict_nhan_vien[ma_nv][2]
+        self.var_phu_cap.set(self.format_money_str(phu_cap))
+        _, tien_luong_ot = self.tinh_luong()
+        luong_cb = self.parse_money(self.var_luong_cb.get())
+        khoan_tru = self.parse_money(self.var_khoan_tru.get())
+        tong_thu_nhap = (
+            (luong_cb / self.STANDARD_WORK_DAYS) * ngay_cong
+            + tien_luong_ot
+            + phu_cap
+        )
+        if khoan_tru > tong_thu_nhap:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Khoản trừ không được lớn hơn tổng lương và phụ cấp!",
+            )
+            return
 
         conn = get_db_connection()
         if not conn:
             return
         try:
             cursor = conn.cursor()
-            query = """
-                INSERT INTO bang_luong (ma_nv, thang, nam, luong_cb, ngay_cong, luong_ot, phu_cap, khoan_tru)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE 
-                    luong_cb = VALUES(luong_cb),
-                    ngay_cong = VALUES(ngay_cong),
-                    luong_ot = VALUES(luong_ot),
-                    phu_cap = VALUES(phu_cap),
-                    khoan_tru = VALUES(khoan_tru)
-            """
-            cursor.execute(
-                query,
-                (
-                    ma_nv,
-                    thang,
-                    nam,
-                    self.parse_money(self.var_luong_cb.get()),
-                    int(self.parse_money(self.var_ngay_cong.get())),
-                    tien_luong_ot_val,  # Lưu tiền Lương OT tự động tính xuống CSDL
-                    self.parse_money(self.var_phu_cap.get()),
-                    self.parse_money(self.var_khoan_tru.get()),
-                ),
+            values = (
+                luong_cb,
+                ngay_cong,
+                gio_ot,
+                phu_cap,
+                khoan_tru,
             )
+            cursor.execute(
+                """
+                SELECT id
+                FROM bang_luong
+                WHERE ma_nv = %s AND thang = %s AND nam = %s
+                LIMIT 1 FOR UPDATE
+                """,
+                (ma_nv, thang, nam),
+            )
+            existing_row = cursor.fetchone()
+
+            if existing_row:
+                cursor.execute(
+                    """
+                    UPDATE bang_luong
+                    SET luong_cb = %s, ngay_cong = %s, gio_ot = %s,
+                        phu_cap = %s, khoan_tru = %s,
+                        ngay_tinh = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    values + (existing_row[0],),
+                )
+                action = "cập nhật"
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO bang_luong
+                        (ma_nv, thang, nam, luong_cb, ngay_cong, gio_ot,
+                         phu_cap, khoan_tru)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (ma_nv, thang, nam) + values,
+                )
+                action = "lưu"
             conn.commit()
             messagebox.showinfo(
                 "Thành công",
-                f"Đã lưu bảng lương tháng {thang}/{nam} cho nhân viên"
+                f"Đã {action} bảng lương tháng {thang}/{nam} cho nhân viên"
                 f" {self.var_ten_nv.get()} ({ma_nv})!",
             )
             self.load_data()
         except Error as e:
+            conn.rollback()
             show_database_error(e, "lưu bảng lương")
         finally:
             conn.close()
@@ -1233,6 +1531,7 @@ class PayrollManagementForm:
                     "Tháng/Năm",
                     "Lương CB (đ)",
                     "Ngày công",
+                    "Số giờ OT",
                     "Lương OT (đ)",
                     "Phụ cấp (đ)",
                     "Khoản trừ (đ)",
@@ -1255,8 +1554,9 @@ class PayrollManagementForm:
 
             if self.role == "NhanVien":
                 query = """
-                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb, 
-                           bl.ngay_cong, bl.luong_ot, bl.phu_cap, bl.khoan_tru, bl.thuc_nhan
+                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb,
+                           bl.ngay_cong, bl.gio_ot, bl.luong_ot, bl.phu_cap,
+                           bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
                     WHERE bl.ma_nv = %s OR nv.nguoi_dung_id = %s
@@ -1280,8 +1580,9 @@ class PayrollManagementForm:
 
             elif self.role == "TruongPhong" and self.user_ma_phong_ban:
                 query = """
-                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb, 
-                           bl.ngay_cong, bl.luong_ot, bl.phu_cap, bl.khoan_tru, bl.thuc_nhan
+                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb,
+                           bl.ngay_cong, bl.gio_ot, bl.luong_ot, bl.phu_cap,
+                           bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
                     WHERE nv.ma_phong_ban = %s AND trang_thai <> 'Đã nghỉ việc'
@@ -1291,8 +1592,9 @@ class PayrollManagementForm:
 
             else:
                 query = """
-                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb, 
-                           bl.ngay_cong, bl.luong_ot, bl.phu_cap, bl.khoan_tru, bl.thuc_nhan
+                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb,
+                           bl.ngay_cong, bl.gio_ot, bl.luong_ot, bl.phu_cap,
+                           bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
                     ORDER BY bl.nam DESC, bl.thang DESC, bl.ma_nv ASC
@@ -1312,6 +1614,8 @@ class PayrollManagementForm:
             thang_nam = f"{row['thang']:02d}/{row['nam']}"
             luong_cb = self.format_money_str(row["luong_cb"])
             luong_ot = self.format_money_str(row["luong_ot"])
+            gio_ot = float(row["gio_ot"] or 0)
+            gio_ot = f"{gio_ot:.1f}".rstrip("0").rstrip(".")
             phu_cap = self.format_money_str(row["phu_cap"])
             khoan_tru = self.format_money_str(row["khoan_tru"])
             thuc_nhan = self.format_money_str(row["thuc_nhan"])
@@ -1325,6 +1629,7 @@ class PayrollManagementForm:
                     thang_nam,
                     luong_cb,
                     row["ngay_cong"],
+                    gio_ot,
                     luong_ot,
                     phu_cap,
                     khoan_tru,
@@ -1352,8 +1657,9 @@ class PayrollManagementForm:
             p = f"%{keyword}%"
             if self.role == "TruongPhong" and self.user_ma_phong_ban:
                 query = """
-                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb, 
-                           bl.ngay_cong, bl.luong_ot, bl.phu_cap, bl.khoan_tru, bl.thuc_nhan
+                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb,
+                           bl.ngay_cong, bl.gio_ot, bl.luong_ot, bl.phu_cap,
+                           bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
                     WHERE nv.ma_phong_ban = %s AND (bl.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR CONCAT(bl.thang, '/', bl.nam) LIKE %s) 
@@ -1361,8 +1667,9 @@ class PayrollManagementForm:
                 cursor.execute(query, (self.user_ma_phong_ban, p, p, p))
             else:
                 query = """
-                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb, 
-                           bl.ngay_cong, bl.luong_ot, bl.phu_cap, bl.khoan_tru, bl.thuc_nhan
+                    SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb,
+                           bl.ngay_cong, bl.gio_ot, bl.luong_ot, bl.phu_cap,
+                           bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
                     WHERE bl.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR CONCAT(bl.thang, '/', bl.nam) LIKE %s
@@ -1376,23 +1683,23 @@ class PayrollManagementForm:
             conn.close()
 
     def lam_moi(self):
-        if self.role != "NhanVien":
-            if self.all_employee_display_list:
-                first_item = self.all_employee_display_list[0]
-                self.cb_ma_nv.set(first_item)
-                self.on_employee_selected(None)
-            else:
-                self.cb_ma_nv.set("")
-                self.var_ten_nv.set("")
-
         self.var_thang.set(str(datetime.datetime.now().month))
         self.var_nam.set(str(datetime.datetime.now().year))
-        self.var_ngay_cong.set("24")
+        self.var_ngay_cong.set(str(self.STANDARD_WORK_DAYS))
         self.var_gio_ot.set("0")
         self.var_phu_cap.set("0")
         self.var_khoan_tru.set("0")
+        self.var_thuc_nhan.set("0 đ")
+        self.var_ten_nv.set("")
+
         if self.role != "NhanVien":
-            self.tinh_luong()
+            self.var_ma_nv.set("")
+            self.var_luong_cb.set("0")
+            self.var_tim_kiem.set("")
+            self.hide_employee_popup()
+            self.update_employee_placeholder()
+            for item in self.tree.selection():
+                self.tree.selection_remove(item)
         self.load_data()
 
     def on_double_click(self, event):
@@ -1450,24 +1757,11 @@ class PayrollManagementForm:
         self.var_luong_cb.set(self.format_money_str(luong_cb_val))
         self.var_ngay_cong.set(str(int(row_data["ngay_cong"])))
 
-        # Quy đổi từ Tiền Lương OT trên bảng ngược lại ra Số giờ OT để nạp lên ô nhập
-        luong_ot_val = self.parse_money(row_data["luong_ot"])
-        luong_1_gio = (luong_cb_val / 24.0) / 8.0 if luong_cb_val > 0 else 0.0
-        gio_ot_calc = (
-            round(luong_ot_val / (luong_1_gio * 1.5), 1)
-            if luong_1_gio > 0
-            else 0.0
-        )
-        gio_ot_str = (
-            str(int(gio_ot_calc))
-            if gio_ot_calc.is_integer()
-            else str(gio_ot_calc)
-        )
-        self.var_gio_ot.set(gio_ot_str)
+        self.var_gio_ot.set(str(row_data["gio_ot"]))
 
-        self.var_phu_cap.set(
-            self.format_money_str(self.parse_money(row_data["phu_cap"]))
-        )
+        employee = self.dict_nhan_vien.get(row_data["ma_nv"])
+        phu_cap = employee[2] if employee else self.parse_money(row_data["phu_cap"])
+        self.var_phu_cap.set(self.format_money_str(phu_cap))
         self.var_khoan_tru.set(
             self.format_money_str(self.parse_money(row_data["khoan_tru"]))
         )

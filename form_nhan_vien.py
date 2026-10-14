@@ -732,7 +732,7 @@ class EmployeeManagementForm:
         self.entry_tim_kiem.bind("<FocusIn>", self.on_search_focus_in)
         self.entry_tim_kiem.bind("<FocusOut>", self.on_search_focus_out)
         self.entry_tim_kiem.bind("<KeyPress>", self.on_search_key_press)
-        self.entry_tim_kiem.bind("<Return>", lambda event: self.tim_kiem())
+        self.entry_tim_kiem.bind("<Return>", self.on_search_enter)
         self.var_tim_kiem.trace_add("write", self.update_search_placeholder)
 
         icon_button(
@@ -875,6 +875,10 @@ class EmployeeManagementForm:
 
     def on_search_focus_out(self, event):
         self.update_search_placeholder()
+
+    def on_search_enter(self, event=None):
+        self.tim_kiem()
+        return "break"
 
     def show_all_employees(self):
         self.var_tim_kiem.set("")

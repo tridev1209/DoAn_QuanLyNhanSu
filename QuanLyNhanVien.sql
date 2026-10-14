@@ -29,13 +29,15 @@ ten_chuc_vu VARCHAR(100) NOT NULL UNIQUE,
 phu_cap DECIMAL(15, 2) DEFAULT 0.00
 ) ENGINE=InnoDB;
 -- . Thêm dữ liệu mẫu cho bảng Chức vụ (chuc_vu)
-INSERT INTO chuc_vu (ma_chuc_vu, ten_chuc_vu) VALUES
-('CV01', 'Trưởng phòng'),
-('CV02', 'Phó phòng'),
-('CV03', 'Nhân viên '),
-('CV04', 'Thực tập sinh')
+INSERT INTO chuc_vu (ma_chuc_vu, ten_chuc_vu, phu_cap) VALUES
+('CV01', 'Trưởng phòng', 2000000.00),
+('CV02', 'Phó phòng', 1000000.00),
+('CV03', 'Nhân viên', 500000.00),
+('CV04', 'Thực tập sinh', 0.00)
 AS new_cv
-ON DUPLICATE KEY UPDATE ten_chuc_vu = new_cv.ten_chuc_vu;
+ON DUPLICATE KEY UPDATE
+    ten_chuc_vu = new_cv.ten_chuc_vu,
+    phu_cap = new_cv.phu_cap;
 
 -- ==============================================================================
 -- 4. TẠO BẢNG NGƯỜI DÙNG & TÀI KHOẢN (nguoi_dung)
@@ -85,21 +87,49 @@ CONSTRAINT fk_nv_nguoidung FOREIGN KEY (nguoi_dung_id)
 CREATE TABLE bang_luong (
     id INT AUTO_INCREMENT PRIMARY KEY,
     ma_nv VARCHAR(20) NOT NULL,
-    thang INT NOT NULL CHECK(thang BETWEEN 1 AND 12),
-    nam INT NOT NULL,
-    luong_cb DECIMAL(15, 2) NOT NULL DEFAULT 0.00,  -- Lương cơ bản
-    ngay_cong INT DEFAULT 24,                       -- Số ngày công
-    luong_ot DECIMAL(15, 2) DEFAULT 0.00,          -- Lương tăng ca
-    phu_cap DECIMAL(15, 2) DEFAULT 0.00,           -- Phụ cấp
-    khoan_tru DECIMAL(15, 2) DEFAULT 0.00,         -- Khoản trừ
-    
-    -- Tự động tính Thực nhận = ((Lương CB / 24) * Số ngày công) + Lương OT + Phụ cấp - Khoản trừ
-    thuc_nhan DECIMAL(15, 2) GENERATED ALWAYS AS (
-        ((luong_cb / 24.0) * ngay_cong) + luong_ot + phu_cap - khoan_tru
+    thang TINYINT UNSIGNED NOT NULL,
+    nam SMALLINT UNSIGNED NOT NULL,
+    luong_cb DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    ngay_cong TINYINT UNSIGNED NOT NULL DEFAULT 24,
+    gio_ot DECIMAL(4, 1) UNSIGNED NOT NULL DEFAULT 0.0,
+
+    -- Chỉ lưu giờ OT; tiền OT được sinh tự động để không thể sai lệch công thức.
+    luong_ot DECIMAL(15, 2) GENERATED ALWAYS AS (
+        ROUND((luong_cb / (24.0 * 8.0)) * gio_ot * 1.5, 2)
     ) STORED,
-    
-    ngay_tinh DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    -- Chỉ có một loại phụ cấp: phụ cấp chức vụ, lấy từ chuc_vu.phu_cap khi lập lương.
+    phu_cap DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    khoan_tru DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+
+    -- Không cho thực nhận âm; công thức này đồng nhất với form tính lương.
+    thuc_nhan DECIMAL(15, 2) GENERATED ALWAYS AS (
+        GREATEST(
+            0,
+            ROUND(
+                ((luong_cb / 24.0) * ngay_cong)
+                + luong_ot
+                + phu_cap - khoan_tru,
+                2
+            )
+        )
+    ) STORED,
+
+    ngay_tinh DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_bang_luong_thang CHECK (thang BETWEEN 1 AND 12),
+    CONSTRAINT chk_bang_luong_nam CHECK (nam BETWEEN 2000 AND 2100),
+    CONSTRAINT chk_bang_luong_ngay_cong CHECK (ngay_cong BETWEEN 0 AND 24),
+    CONSTRAINT chk_bang_luong_gio_ot CHECK (gio_ot BETWEEN 0 AND 40),
+    CONSTRAINT chk_bang_luong_luong_cb CHECK (luong_cb >= 0),
+    CONSTRAINT chk_bang_luong_phu_cap CHECK (phu_cap >= 0),
+    CONSTRAINT chk_bang_luong_khoan_tru CHECK (
+        khoan_tru BETWEEN 0 AND (
+            ((luong_cb / 24.0) * ngay_cong) + luong_ot + phu_cap
+        )
+    ),
     UNIQUE KEY uq_nv_thang_nam (ma_nv, thang, nam),
+    KEY idx_bang_luong_nam_thang (nam, thang),
     CONSTRAINT fk_luong_nhanvien FOREIGN KEY (ma_nv) 
         REFERENCES nhan_vien(ma_nv) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
