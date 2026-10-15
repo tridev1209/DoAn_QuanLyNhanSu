@@ -1,4 +1,4 @@
-create	database QuanLyNhanVien
+CREATE DATABASE IF NOT EXISTS QuanLyNhanVien
 CHARACTER SET utf8mb4 
 COLLATE utf8mb4_unicode_ci;
 
@@ -62,6 +62,8 @@ ma_nv VARCHAR(20) PRIMARY KEY,
 ho_ten VARCHAR(100) NOT NULL,
 gioi_tinh VARCHAR(10) DEFAULT 'Nam',
 ngay_sinh DATE,
+ngay_vao_lam DATE NOT NULL,
+ngay_nghi_viec DATE DEFAULT NULL,
 sdt VARCHAR(15) NOT NULL UNIQUE,
 email VARCHAR(100) NOT NULL UNIQUE,
 ma_phong_ban VARCHAR(10),
@@ -70,6 +72,12 @@ luong_co_ban DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
 trang_thai VARCHAR(30) DEFAULT 'Đang làm việc',
 nguoi_dung_id INT UNIQUE, -- Liên kết 1-1 với bảng nguoi_dung
 
+
+CONSTRAINT chk_nhan_vien_ngay_lam_viec CHECK (
+    ngay_nghi_viec IS NULL OR ngay_nghi_viec >= ngay_vao_lam
+),
+
+KEY idx_nhan_vien_ngay_lam (ngay_vao_lam, ngay_nghi_viec),
 
 CONSTRAINT fk_nv_phongban FOREIGN KEY (ma_phong_ban)
     REFERENCES phong_ban(ma_phong_ban) ON DELETE SET NULL ON UPDATE CASCADE,
@@ -84,7 +92,7 @@ CONSTRAINT fk_nv_nguoidung FOREIGN KEY (nguoi_dung_id)
 
 
 --
-CREATE TABLE bang_luong (
+CREATE TABLE IF NOT EXISTS bang_luong (
     id INT AUTO_INCREMENT PRIMARY KEY,
     ma_nv VARCHAR(20) NOT NULL,
     thang TINYINT UNSIGNED NOT NULL,
@@ -134,6 +142,70 @@ CREATE TABLE bang_luong (
         REFERENCES nhan_vien(ma_nv) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
+-- Nâng cấp an toàn cho CSDL đã tạo từ phiên bản cũ.
+SET @add_ngay_vao_lam = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'nhan_vien'
+       AND COLUMN_NAME = 'ngay_vao_lam') = 0,
+    'ALTER TABLE nhan_vien ADD COLUMN ngay_vao_lam DATE NULL AFTER ngay_sinh',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_ngay_vao_lam;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @add_ngay_nghi_viec = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'nhan_vien'
+       AND COLUMN_NAME = 'ngay_nghi_viec') = 0,
+    'ALTER TABLE nhan_vien ADD COLUMN ngay_nghi_viec DATE NULL AFTER ngay_vao_lam',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_ngay_nghi_viec;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+UPDATE nhan_vien nv
+LEFT JOIN (
+    SELECT ma_nv, MIN(STR_TO_DATE(CONCAT(nam, '-', LPAD(thang, 2, '0'), '-01'), '%Y-%m-%d')) AS ngay_dau_tien
+    FROM bang_luong
+    GROUP BY ma_nv
+) lich_su ON lich_su.ma_nv = nv.ma_nv
+SET nv.ngay_vao_lam = COALESCE(nv.ngay_vao_lam, lich_su.ngay_dau_tien, CURRENT_DATE());
+
+-- Dữ liệu cũ không lưu ngày nghỉ; ngày chạy nâng cấp được dùng làm mốc ban đầu.
+UPDATE nhan_vien
+SET ngay_nghi_viec = CURRENT_DATE()
+WHERE trang_thai = 'Đã nghỉ việc' AND ngay_nghi_viec IS NULL;
+
+ALTER TABLE nhan_vien MODIFY COLUMN ngay_vao_lam DATE NOT NULL;
+
+SET @add_index_ngay_lam = IF(
+    (SELECT COUNT(*) FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'nhan_vien'
+       AND INDEX_NAME = 'idx_nhan_vien_ngay_lam') = 0,
+    'ALTER TABLE nhan_vien ADD INDEX idx_nhan_vien_ngay_lam (ngay_vao_lam, ngay_nghi_viec)',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_index_ngay_lam;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @add_check_ngay_lam = IF(
+    (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'nhan_vien'
+       AND CONSTRAINT_NAME = 'chk_nhan_vien_ngay_lam_viec') = 0,
+    'ALTER TABLE nhan_vien ADD CONSTRAINT chk_nhan_vien_ngay_lam_viec CHECK (ngay_nghi_viec IS NULL OR ngay_nghi_viec >= ngay_vao_lam)',
+    'SELECT 1'
+);
+PREPARE stmt FROM @add_check_ngay_lam;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 
 
 
@@ -153,16 +225,19 @@ AS new_nd
 ON DUPLICATE KEY UPDATE ho_ten = new_nd.ho_ten,  vai_tro = new_nd.vai_tro;
 
 -- 4. Thêm dữ liệu mẫu cho bảng Nhân viên (nhan_vien)
-INSERT INTO nhan_vien (ma_nv, ho_ten, gioi_tinh, ngay_sinh, sdt, email, ma_phong_ban, ma_chuc_vu, luong_co_ban, trang_thai, nguoi_dung_id) VALUES
-('NS001',  'Nguyễn Thị Hoa', 'Nữ',  '1995-05-12', '0901112233', 'hoants@company.com',  'PB02', 'CV01', 12000000.00, 'Đang làm việc', 101),
-('KT001',  'Trần Văn Minh',  'Nam', '1998-08-20', '0902223344', 'minhkt@company.com',  'PB05', 'CV03', 10000000.00, 'Đang làm việc', 102),
-('KD001',  'Lê Hoàng Long',  'Nam', '1997-03-15', '0903334455', 'longkd@company.com',  'PB04', 'CV03', 11000000.00, 'Đang làm việc', 103),
-('IT001',  'Phạm Quốc Anh',  'Nam', '1996-11-05', '0904445566', 'anhit@company.com',   'PB01', 'CV03', 11500000.00, 'Đang làm việc', 104),
-('MKT001', 'Đỗ Phương Thảo', 'Nữ',  '1994-09-18', '0905556677', 'thaomkt@company.com', 'PB03', 'CV01', 13000000.00, 'Đang làm việc', 105),
-('MKT002', 'Nguyễn Văn Nam', 'Nam', '1998-04-12', '0907778899', 'nammkt@company.com', 'PB03', 'CV03', 10500000.00, 'Đang làm việc', 106),
-('MKT003', 'Lê Khánh Linh',  'Nữ',  '2000-09-25', '0908889900', 'linhmkt@company.com', 'PB03', 'CV03', 10000000.00, 'Đang làm việc', 107)
+INSERT INTO nhan_vien (ma_nv, ho_ten, gioi_tinh, ngay_sinh, ngay_vao_lam, ngay_nghi_viec, sdt, email, ma_phong_ban, ma_chuc_vu, luong_co_ban, trang_thai, nguoi_dung_id) VALUES
+('NS001',  'Nguyễn Thị Hoa', 'Nữ',  '1995-05-12', '2018-06-01', NULL, '0901112233', 'hoants@company.com',  'PB02', 'CV01', 12000000.00, 'Đang làm việc', 101),
+('KT001',  'Trần Văn Minh',  'Nam', '1998-08-20', '2021-03-15', NULL, '0902223344', 'minhkt@company.com',  'PB05', 'CV03', 10000000.00, 'Đang làm việc', 102),
+('KD001',  'Lê Hoàng Long',  'Nam', '1997-03-15', '2020-08-10', NULL, '0903334455', 'longkd@company.com',  'PB04', 'CV03', 11000000.00, 'Đang làm việc', 103),
+('IT001',  'Phạm Quốc Anh',  'Nam', '1996-11-05', '2019-04-08', NULL, '0904445566', 'anhit@company.com',   'PB01', 'CV03', 11500000.00, 'Đang làm việc', 104),
+('MKT001', 'Đỗ Phương Thảo', 'Nữ',  '1994-09-18', '2017-11-20', NULL, '0905556677', 'thaomkt@company.com', 'PB03', 'CV01', 13000000.00, 'Đang làm việc', 105),
+('MKT002', 'Nguyễn Văn Nam', 'Nam', '1998-04-12', '2022-01-05', NULL, '0907778899', 'nammkt@company.com', 'PB03', 'CV03', 10500000.00, 'Đang làm việc', 106),
+('MKT003', 'Lê Khánh Linh',  'Nữ',  '2000-09-25', '2023-07-12', NULL, '0908889900', 'linhmkt@company.com', 'PB03', 'CV03', 10000000.00, 'Đang làm việc', 107)
 AS new_nv
 -- DROP DATABASE IF EXISTS QuanLyNhanVien;
-ON DUPLICATE KEY UPDATE ho_ten = new_nv.ho_ten;
+ON DUPLICATE KEY UPDATE
+    ho_ten = new_nv.ho_ten,
+    ngay_vao_lam = new_nv.ngay_vao_lam,
+    ngay_nghi_viec = new_nv.ngay_nghi_viec;
 
 SELECT * FROM nhan_vien;

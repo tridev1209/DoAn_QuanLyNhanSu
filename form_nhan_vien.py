@@ -45,6 +45,10 @@ class EmployeeManagementForm:
         self.var_ten_nv = tk.StringVar()
         self.var_gioi_tinh = tk.StringVar(value="Nam")
         self.var_ngay_sinh = tk.StringVar(value="01/01/1995")
+        self.var_ngay_vao_lam = tk.StringVar(
+            value=datetime.date.today().strftime("%d/%m/%Y")
+        )
+        self.var_ngay_nghi_viec = tk.StringVar()
         self.var_email = tk.StringVar()
         self.var_sdt = tk.StringVar()
         self.var_phong_ban = tk.StringVar()
@@ -201,32 +205,39 @@ class EmployeeManagementForm:
             # Xử lý ngày 29/02 khi năm đích không phải năm nhuận.
             return source_date.replace(year=source_date.year - years, day=28)
 
-    def open_birth_date_picker(self):
-        current_popup = getattr(self, "birth_date_popup", None)
+    def open_date_picker(
+        self,
+        target_var,
+        target_entry,
+        title,
+        min_date,
+        max_date,
+        popup_attribute,
+    ):
+        """Mở lịch dùng chung cho ngày sinh, ngày vào làm và ngày nghỉ việc."""
+        if min_date > max_date:
+            min_date = max_date
+        current_popup = getattr(self, popup_attribute, None)
         if current_popup and current_popup.winfo_exists():
             current_popup.lift()
             current_popup.focus_force()
             return
 
-        today = datetime.date.today()
-        min_birth_date = self.date_years_ago(today, 65)
-        max_birth_date = self.date_years_ago(today, 18)
-
         try:
             selected_date = datetime.datetime.strptime(
-                self.var_ngay_sinh.get().strip(), "%d/%m/%Y"
+                target_var.get().strip(), "%d/%m/%Y"
             ).date()
         except ValueError:
-            selected_date = max_birth_date
+            selected_date = max_date
 
-        if selected_date < min_birth_date:
-            selected_date = min_birth_date
-        elif selected_date > max_birth_date:
-            selected_date = max_birth_date
+        if selected_date < min_date:
+            selected_date = min_date
+        elif selected_date > max_date:
+            selected_date = max_date
 
         popup = tk.Toplevel(self.parent)
-        self.birth_date_popup = popup
-        popup.title("Chọn ngày sinh")
+        setattr(self, popup_attribute, popup)
+        popup.title(title)
         popup.configure(bg="white")
         popup.resizable(False, False)
         popup.transient(self.parent.winfo_toplevel())
@@ -244,13 +255,13 @@ class EmployeeManagementForm:
             if popup.winfo_exists():
                 popup.grab_release()
                 popup.destroy()
-            self.birth_date_popup = None
+            setattr(self, popup_attribute, None)
 
         def choose_date(chosen_date):
-            self.var_ngay_sinh.set(chosen_date.strftime("%d/%m/%Y"))
-            self.entry_ngay_sinh.icursor(tk.END)
+            target_var.set(chosen_date.strftime("%d/%m/%Y"))
+            target_entry.icursor(tk.END)
             close_popup()
-            self.entry_ngay_sinh.focus_set()
+            target_entry.focus_set()
 
         def render_calendar(event=None):
             for child in calendar_frame.winfo_children():
@@ -281,7 +292,7 @@ class EmployeeManagementForm:
                         continue
 
                     date_value = datetime.date(year, month, day)
-                    is_allowed = min_birth_date <= date_value <= max_birth_date
+                    is_allowed = min_date <= date_value <= max_date
                     is_selected = date_value == selected_date
                     tk.Button(
                         calendar_frame,
@@ -309,7 +320,7 @@ class EmployeeManagementForm:
                 month = 1
                 year += 1
 
-            if min_birth_date.year <= year <= max_birth_date.year:
+            if min_date.year <= year <= max_date.year:
                 month_var.set(month_names[month - 1])
                 year_var.set(year)
                 render_calendar()
@@ -335,7 +346,7 @@ class EmployeeManagementForm:
         year_combo = ttk.Combobox(
             header,
             textvariable=year_var,
-            values=list(range(max_birth_date.year, min_birth_date.year - 1, -1)),
+            values=list(range(max_date.year, min_date.year - 1, -1)),
             width=6,
             state="readonly",
             font=("Helvetica", 9),
@@ -358,10 +369,10 @@ class EmployeeManagementForm:
 
         render_calendar()
         popup.update_idletasks()
-        popup_x = self.entry_ngay_sinh.winfo_rootx()
+        popup_x = target_entry.winfo_rootx()
         popup_y = (
-            self.entry_ngay_sinh.winfo_rooty()
-            + self.entry_ngay_sinh.winfo_height()
+            target_entry.winfo_rooty()
+            + target_entry.winfo_height()
             + 3
         )
         popup_width = popup.winfo_reqwidth()
@@ -371,6 +382,62 @@ class EmployeeManagementForm:
         popup.geometry(f"+{max(0, popup_x)}+{max(0, popup_y)}")
         popup.grab_set()
         popup.focus_force()
+
+    def open_birth_date_picker(self):
+        today = datetime.date.today()
+        self.open_date_picker(
+            self.var_ngay_sinh,
+            self.entry_ngay_sinh,
+            "Chọn ngày sinh",
+            self.date_years_ago(today, 65),
+            self.date_years_ago(today, 18),
+            "birth_date_popup",
+        )
+
+    def open_start_date_picker(self):
+        today = datetime.date.today()
+        try:
+            birth_date = datetime.datetime.strptime(
+                self.var_ngay_sinh.get().strip(), "%d/%m/%Y"
+            ).date()
+            min_date = self.date_years_ago(birth_date, -18)
+        except ValueError:
+            min_date = datetime.date(1950, 1, 1)
+        self.open_date_picker(
+            self.var_ngay_vao_lam,
+            self.entry_ngay_vao_lam,
+            "Chọn ngày vào làm",
+            min_date,
+            today,
+            "start_date_popup",
+        )
+
+    def open_end_date_picker(self):
+        today = datetime.date.today()
+        try:
+            min_date = datetime.datetime.strptime(
+                self.var_ngay_vao_lam.get().strip(), "%d/%m/%Y"
+            ).date()
+        except ValueError:
+            min_date = datetime.date(1950, 1, 1)
+        self.open_date_picker(
+            self.var_ngay_nghi_viec,
+            self.entry_ngay_nghi_viec,
+            "Chọn ngày nghỉ việc",
+            min_date,
+            today,
+            "end_date_popup",
+        )
+
+    def on_employee_status_changed(self, event=None):
+        """Giữ ngày nghỉ việc đồng bộ với trạng thái trên biểu mẫu."""
+        if self.var_trang_thai.get() == STATUS_RESIGNED:
+            if not self.var_ngay_nghi_viec.get().strip():
+                self.var_ngay_nghi_viec.set(
+                    datetime.date.today().strftime("%d/%m/%Y")
+                )
+        else:
+            self.var_ngay_nghi_viec.set("")
 
     def on_digits_only_key_release(self, event, var, max_len=11):
         raw = str(var.get())
@@ -622,6 +689,75 @@ class EmployeeManagementForm:
         self.cb_trang_thai.grid(
             row=3, column=1, padx=5, pady=5, sticky="w"
         )
+        self.cb_trang_thai.bind(
+            "<<ComboboxSelected>>", self.on_employee_status_changed
+        )
+
+        tk.Label(
+            input_frame,
+            text="Ngày vào làm (*):",
+            bg="#f8fafc",
+            font=("Helvetica", 10),
+        ).grid(row=3, column=2, sticky="w", pady=5, padx=(15, 0))
+        start_date_frame = tk.Frame(input_frame, bg="#f8fafc")
+        start_date_frame.grid(row=3, column=3, padx=5, pady=5, sticky="w")
+        self.entry_ngay_vao_lam = tk.Entry(
+            start_date_frame,
+            textvariable=self.var_ngay_vao_lam,
+            width=13,
+            font=("Helvetica", 10),
+        )
+        self.entry_ngay_vao_lam.pack(side=tk.LEFT)
+        self.entry_ngay_vao_lam.bind(
+            "<KeyRelease>",
+            lambda e: self.on_date_key_release(e, self.var_ngay_vao_lam),
+        )
+        icon_button(
+            start_date_frame,
+            text="",
+            icon="calendar",
+            icon_color="#0f172a",
+            bg="#e2e8f0",
+            activebackground="#cbd5e1",
+            padx=5,
+            pady=1,
+            bd=0,
+            cursor="hand2",
+            command=self.open_start_date_picker,
+        ).pack(side=tk.LEFT, padx=(3, 0))
+
+        tk.Label(
+            input_frame,
+            text="Ngày nghỉ việc:",
+            bg="#f8fafc",
+            font=("Helvetica", 10),
+        ).grid(row=3, column=4, sticky="w", pady=5, padx=(15, 0))
+        end_date_frame = tk.Frame(input_frame, bg="#f8fafc")
+        end_date_frame.grid(row=3, column=5, padx=5, pady=5, sticky="w")
+        self.entry_ngay_nghi_viec = tk.Entry(
+            end_date_frame,
+            textvariable=self.var_ngay_nghi_viec,
+            width=13,
+            font=("Helvetica", 10),
+        )
+        self.entry_ngay_nghi_viec.pack(side=tk.LEFT)
+        self.entry_ngay_nghi_viec.bind(
+            "<KeyRelease>",
+            lambda e: self.on_date_key_release(e, self.var_ngay_nghi_viec),
+        )
+        icon_button(
+            end_date_frame,
+            text="",
+            icon="calendar",
+            icon_color="#0f172a",
+            bg="#e2e8f0",
+            activebackground="#cbd5e1",
+            padx=5,
+            pady=1,
+            bd=0,
+            cursor="hand2",
+            command=self.open_end_date_picker,
+        ).pack(side=tk.LEFT, padx=(3, 0))
 
         # --- THANH CÔNG CỤ ---
         action_frame = tk.Frame(self.parent, bg="#f8fafc")
@@ -773,6 +909,8 @@ class EmployeeManagementForm:
             "ten_nv",
             "gioi_tinh",
             "ngay_sinh",
+            "ngay_vao_lam",
+            "ngay_nghi_viec",
             "email",
             "sdt",
             "phong_ban",
@@ -814,6 +952,8 @@ class EmployeeManagementForm:
             "ten_nv": "Họ và Tên",
             "gioi_tinh": "Giới tính",
             "ngay_sinh": "Ngày sinh",
+            "ngay_vao_lam": "Ngày vào làm",
+            "ngay_nghi_viec": "Ngày nghỉ việc",
             "email": "Email",
             "sdt": "Số ĐT",
             "phong_ban": "Phòng ban",
@@ -826,6 +966,8 @@ class EmployeeManagementForm:
             "ten_nv": 140,
             "gioi_tinh": 65,
             "ngay_sinh": 90,
+            "ngay_vao_lam": 95,
+            "ngay_nghi_viec": 100,
             "email": 140,
             "sdt": 95,
             "phong_ban": 115,
@@ -849,8 +991,15 @@ class EmployeeManagementForm:
         scrollbar = ttk.Scrollbar(
             table_frame, orient=tk.VERTICAL, command=self.tree.yview
         )
-        self.tree.configure(yscroll=scrollbar.set)
+        scrollbar_x = ttk.Scrollbar(
+            table_frame, orient=tk.HORIZONTAL, command=self.tree.xview
+        )
+        self.tree.configure(
+            yscroll=scrollbar.set,
+            xscroll=scrollbar_x.set,
+        )
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
         self.tree.pack(fill=tk.BOTH, expand=True)
 
         self.tree.bind("<Double-1>", self.on_double_click)
@@ -1031,6 +1180,8 @@ class EmployeeManagementForm:
         email = self.var_email.get().strip().lower()
         sdt = self.var_sdt.get().strip()
         ngay_sinh_str = self.var_ngay_sinh.get().strip()
+        ngay_vao_lam_str = self.var_ngay_vao_lam.get().strip()
+        ngay_nghi_viec_str = self.var_ngay_nghi_viec.get().strip()
         selected_pb_name = self.var_phong_ban.get().strip()
         selected_cv_name = self.var_chuc_vu.get().strip()
         employee_status = self.var_trang_thai.get().strip()
@@ -1038,11 +1189,11 @@ class EmployeeManagementForm:
         self.var_ten_nv.set(ten)
         self.var_email.set(email)
 
-        if not ma or not ten or not email or not sdt:
+        if not ma or not ten or not email or not sdt or not ngay_vao_lam_str:
             messagebox.showwarning(
                 "Cảnh báo",
                 "Vui lòng nhập đầy đủ các thông tin bắt buộc (*): Mã NV, Họ Tên,"
-                " Email, Số ĐT!",
+                " Email, Số ĐT và Ngày vào làm!",
             )
             return False
 
@@ -1155,6 +1306,67 @@ class EmployeeManagementForm:
                 "Cảnh báo",
                 "Định dạng ngày sinh không hợp lệ! Vui lòng nhập theo chuẩn"
                 " DD/MM/YYYY.",
+            )
+            return False
+
+        try:
+            ngay_vao_lam = datetime.datetime.strptime(
+                ngay_vao_lam_str, "%d/%m/%Y"
+            ).date()
+        except ValueError:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Ngày vào làm không hợp lệ! Vui lòng nhập theo chuẩn DD/MM/YYYY.",
+            )
+            return False
+
+        today_date = datetime.date.today()
+        earliest_start = self.date_years_ago(parsed_date.date(), -18)
+        if ngay_vao_lam < earliest_start:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Ngày vào làm phải từ thời điểm nhân viên đủ 18 tuổi.",
+            )
+            return False
+        if ngay_vao_lam > today_date:
+            messagebox.showwarning(
+                "Cảnh báo", "Ngày vào làm không được lớn hơn ngày hiện tại."
+            )
+            return False
+
+        ngay_nghi_viec = None
+        if ngay_nghi_viec_str:
+            try:
+                ngay_nghi_viec = datetime.datetime.strptime(
+                    ngay_nghi_viec_str, "%d/%m/%Y"
+                ).date()
+            except ValueError:
+                messagebox.showwarning(
+                    "Cảnh báo",
+                    "Ngày nghỉ việc không hợp lệ! Vui lòng nhập theo chuẩn DD/MM/YYYY.",
+                )
+                return False
+            if ngay_nghi_viec < ngay_vao_lam:
+                messagebox.showwarning(
+                    "Cảnh báo", "Ngày nghỉ việc không được trước ngày vào làm."
+                )
+                return False
+            if ngay_nghi_viec > today_date:
+                messagebox.showwarning(
+                    "Cảnh báo", "Ngày nghỉ việc không được lớn hơn ngày hiện tại."
+                )
+                return False
+
+        if employee_status == STATUS_RESIGNED and ngay_nghi_viec is None:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Nhân viên đã nghỉ việc phải có ngày nghỉ việc.",
+            )
+            return False
+        if employee_status != STATUS_RESIGNED and ngay_nghi_viec is not None:
+            messagebox.showwarning(
+                "Cảnh báo",
+                "Chỉ nhập ngày nghỉ việc khi trạng thái là 'Đã nghỉ việc'.",
             )
             return False
 
@@ -1376,7 +1588,8 @@ class EmployeeManagementForm:
 
             if self.role == ROLE_MANAGER:
                 query = """
-                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh, nv.email, nv.sdt, 
+                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh,
+                           nv.ngay_vao_lam, nv.ngay_nghi_viec, nv.email, nv.sdt,
                            pb.ten_phong_ban, cv.ten_chuc_vu, nv.luong_co_ban, nv.trang_thai
                     FROM nhan_vien nv
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
@@ -1387,7 +1600,8 @@ class EmployeeManagementForm:
                 cursor.execute(query, (self.user_ma_phong_ban,))
             else:
                 query = """
-                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh, nv.email, nv.sdt, 
+                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh,
+                           nv.ngay_vao_lam, nv.ngay_nghi_viec, nv.email, nv.sdt,
                            pb.ten_phong_ban, cv.ten_chuc_vu, nv.luong_co_ban, nv.trang_thai
                     FROM nhan_vien nv
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
@@ -1411,6 +1625,16 @@ class EmployeeManagementForm:
             ngay_sinh = (
                 row["ngay_sinh"].strftime("%d/%m/%Y") if row["ngay_sinh"] else ""
             )
+            ngay_vao_lam = (
+                row["ngay_vao_lam"].strftime("%d/%m/%Y")
+                if row["ngay_vao_lam"]
+                else ""
+            )
+            ngay_nghi_viec = (
+                row["ngay_nghi_viec"].strftime("%d/%m/%Y")
+                if row["ngay_nghi_viec"]
+                else ""
+            )
             luong_cb = self.format_money_str(row["luong_co_ban"])
             self.tree.insert(
                 "",
@@ -1420,6 +1644,8 @@ class EmployeeManagementForm:
                     row["ho_ten"],
                     row["gioi_tinh"],
                     ngay_sinh,
+                    ngay_vao_lam,
+                    ngay_nghi_viec,
                     row["email"],
                     row["sdt"],
                     row["ten_phong_ban"] or "",
@@ -1572,6 +1798,8 @@ class EmployeeManagementForm:
                     ho_ten,
                     gioi_tinh,
                     ngay_sinh,
+                    ngay_vao_lam,
+                    ngay_nghi_viec,
                     email,
                     sdt,
                     ma_phong_ban,
@@ -1583,7 +1811,8 @@ class EmployeeManagementForm:
                 VALUES
                 (
                     %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s
                 )
             """
 
@@ -1596,6 +1825,10 @@ class EmployeeManagementForm:
                     self.format_date_to_db(
                         self.var_ngay_sinh.get()
                     ),
+                    self.format_date_to_db(
+                        self.var_ngay_vao_lam.get()
+                    ),
+                    None,
                     email,
                     sdt,
                     ma_phong,
@@ -1686,6 +1919,12 @@ class EmployeeManagementForm:
         email = self.var_email.get().strip()
         gioi_tinh = self.var_gioi_tinh.get()
         ngay_sinh = self.format_date_to_db(self.var_ngay_sinh.get())
+        ngay_vao_lam = self.format_date_to_db(self.var_ngay_vao_lam.get())
+        ngay_nghi_viec = (
+            self.format_date_to_db(self.var_ngay_nghi_viec.get())
+            if self.var_ngay_nghi_viec.get().strip()
+            else None
+        )
         sdt = self.var_sdt.get().strip()
         trang_thai = self.var_trang_thai.get()
 
@@ -1759,6 +1998,8 @@ class EmployeeManagementForm:
                     ho_ten=%s,
                     gioi_tinh=%s,
                     ngay_sinh=%s,
+                    ngay_vao_lam=%s,
+                    ngay_nghi_viec=%s,
                     email=%s,
                     sdt=%s,
                     ma_phong_ban=%s,
@@ -1774,6 +2015,8 @@ class EmployeeManagementForm:
                     ten,
                     gioi_tinh,
                     ngay_sinh,
+                    ngay_vao_lam,
+                    ngay_nghi_viec,
                     email,
                     sdt,
                     ma_phong,
@@ -1788,25 +2031,17 @@ class EmployeeManagementForm:
                 cursor.execute(
                     """
                     UPDATE nguoi_dung
-                    SET ho_ten=%s, email=%s, vai_tro=%s
+                    SET ho_ten=%s, email=%s, vai_tro=%s, trang_thai=%s
                     WHERE id=%s
                     """,
                     (
                         ten,
                         email,
                         vai_tro,
+                        self.account_status_from_employee_status(trang_thai),
                         employee_user_id,
                     ),
                 )
-                if trang_thai == STATUS_RESIGNED:
-                    cursor.execute(
-                        """
-                        UPDATE nguoi_dung
-                        SET trang_thai=0
-                        WHERE id=%s
-                        """,
-                        (employee_user_id,),
-                    )
 
             conn.commit()
 
@@ -1848,9 +2083,10 @@ class EmployeeManagementForm:
             return
 
         vals = self.tree.item(selected[0], "values")
-        ma_nv = vals[0]
-        ho_ten = vals[1]
-        trang_thai = vals[9]
+        row_data = dict(zip(self.columns_def, vals))
+        ma_nv = row_data["ma_nv"]
+        ho_ten = row_data["ten_nv"]
+        trang_thai = row_data["trang_thai"]
 
         if self.role == ROLE_MANAGER and ma_nv in (
             self.user_actual_ma_nv,
@@ -1919,10 +2155,11 @@ class EmployeeManagementForm:
             cursor.execute(
                 """
                 UPDATE nhan_vien
-                SET trang_thai = %s
+                SET trang_thai = %s,
+                    ngay_nghi_viec = %s
                 WHERE ma_nv = %s
                 """,
-                (STATUS_RESIGNED, ma_nv),
+                (STATUS_RESIGNED, datetime.date.today(), ma_nv),
             )
 
             if employee_user_id is not None:
@@ -1972,10 +2209,10 @@ class EmployeeManagementForm:
             return
 
         vals = self.tree.item(selected[0], "values")
-
-        ma_nv = vals[0]
-        ho_ten = vals[1]
-        trang_thai = vals[9]
+        row_data = dict(zip(self.columns_def, vals))
+        ma_nv = row_data["ma_nv"]
+        ho_ten = row_data["ten_nv"]
+        trang_thai = row_data["trang_thai"]
 
         if trang_thai != STATUS_RESIGNED:
             messagebox.showwarning(
@@ -2124,7 +2361,8 @@ class EmployeeManagementForm:
 
             if self.role == ROLE_MANAGER:
                 query = """
-                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh, nv.email, nv.sdt, 
+                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh,
+                           nv.ngay_vao_lam, nv.ngay_nghi_viec, nv.email, nv.sdt,
                            pb.ten_phong_ban, cv.ten_chuc_vu, nv.luong_co_ban, nv.trang_thai
                     FROM nhan_vien nv
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
@@ -2136,7 +2374,8 @@ class EmployeeManagementForm:
                 cursor.execute(query, (self.user_ma_phong_ban, p, p, p))
             else:
                 query = """
-                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh, nv.email, nv.sdt, 
+                    SELECT nv.ma_nv, nv.ho_ten, nv.gioi_tinh, nv.ngay_sinh,
+                           nv.ngay_vao_lam, nv.ngay_nghi_viec, nv.email, nv.sdt,
                            pb.ten_phong_ban, cv.ten_chuc_vu, nv.luong_co_ban, nv.trang_thai
                     FROM nhan_vien nv
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
@@ -2161,6 +2400,10 @@ class EmployeeManagementForm:
         self.var_ten_nv.set("")
         self.var_gioi_tinh.set("Nam")
         self.var_ngay_sinh.set("01/01/1995")
+        self.var_ngay_vao_lam.set(
+            datetime.date.today().strftime("%d/%m/%Y")
+        )
+        self.var_ngay_nghi_viec.set("")
         self.var_email.set("")
         self.var_sdt.set("")
 
@@ -2232,6 +2475,8 @@ class EmployeeManagementForm:
         self.var_ten_nv.set(row_data["ten_nv"])
         self.var_gioi_tinh.set(row_data["gioi_tinh"])
         self.var_ngay_sinh.set(row_data["ngay_sinh"])
+        self.var_ngay_vao_lam.set(row_data["ngay_vao_lam"])
+        self.var_ngay_nghi_viec.set(row_data["ngay_nghi_viec"])
         self.var_email.set(row_data["email"])
         self.var_sdt.set(row_data["sdt"])
         self.var_phong_ban.set(row_data["phong_ban"])
