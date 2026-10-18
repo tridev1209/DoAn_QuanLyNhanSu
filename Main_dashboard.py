@@ -1,9 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
-import base64
-import hashlib
 import hmac
-import os
 from db_connection import get_db_connection
 from mysql.connector import Error
 from ui_icons import get_icon, icon_button, icon_label
@@ -11,37 +8,11 @@ from user_error import show_database_error
 
 
 MAX_FAILED_LOGIN_ATTEMPTS = 5
-PASSWORD_HASH_ITERATIONS = 260_000
-
-
-def hash_password(password):
-    """Tạo chuỗi băm có salt, đủ ngắn để tương thích cột VARCHAR(100)."""
-    salt = os.urandom(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt, PASSWORD_HASH_ITERATIONS
-    )
-    salt_text = base64.urlsafe_b64encode(salt).decode("ascii").rstrip("=")
-    digest_text = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-    return f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${salt_text}${digest_text}"
 
 
 def verify_password(password, stored_password):
-    """Kiểm tra cả mật khẩu đã băm và dữ liệu dạng chữ của phiên bản cũ."""
-    if not stored_password.startswith("pbkdf2_sha256$"):
-        return hmac.compare_digest(stored_password, password)
-
-    try:
-        _, iterations, salt_text, digest_text = stored_password.split("$", 3)
-        salt = base64.urlsafe_b64decode(salt_text + "=" * (-len(salt_text) % 4))
-        expected = base64.urlsafe_b64decode(
-            digest_text + "=" * (-len(digest_text) % 4)
-        )
-        actual = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), salt, int(iterations)
-        )
-        return hmac.compare_digest(actual, expected)
-    except (TypeError, ValueError):
-        return False
+    """So sánh trực tiếp với mật khẩu dạng chữ trong cơ sở dữ liệu."""
+    return hmac.compare_digest(str(stored_password), password)
 
 
 def validate_new_password(password):
@@ -52,6 +23,207 @@ def validate_new_password(password):
     ):
         return "Mật khẩu mới phải có cả chữ và số."
     return None
+
+
+def get_password_criteria(password):
+    """Trả về các tiêu chí đang dùng để kiểm tra mật khẩu mới."""
+    return (
+        ("Có ít nhất 8 ký tự", len(password) >= 8),
+        ("Có ít nhất 1 chữ cái", any(char.isalpha() for char in password)),
+        ("Có ít nhất 1 chữ số", any(char.isdigit() for char in password)),
+    )
+
+
+class PasswordEntry(ttk.Entry):
+    REVEAL_DURATION_MS = 800
+
+    def __init__(self, master, variable, **kwargs):
+        self.password_variable = variable
+        self.reveal_after_id = None
+        self.password_visible = False
+        entry_font = kwargs.get("font", ("Segoe UI", 10))
+        super().__init__(
+            master,
+            textvariable=self.password_variable,
+            show="*",
+            **kwargs,
+        )
+        field_bg = ttk.Style(self).lookup("TEntry", "fieldbackground") or "white"
+        self.reveal_label = tk.Label(
+            self,
+            text="",
+            font=entry_font,
+            bg=field_bg,
+            fg="#111827",
+            bd=0,
+            padx=0,
+            pady=0,
+        )
+        self.eye_button = tk.Button(
+            self,
+            image=get_icon(self, "eye_off", "#64748b", 16),
+            bg=field_bg,
+            activebackground=field_bg,
+            bd=0,
+            relief=tk.FLAT,
+            cursor="hand2",
+            takefocus=False,
+            command=self.toggle_visibility,
+        )
+        self.eye_button._icon_image = self.eye_button.cget("image")
+        self.eye_button.place(relx=1.0, rely=0.5, x=-3, anchor="e", width=25, height=22)
+        self.bind("<KeyPress>", self._hide_password, add="+")
+        self.bind("<KeyRelease>", self._handle_key_release, add="+")
+        self.bind("<<Paste>>", self._handle_paste, add="+")
+        self.bind("<Button-1>", self._hide_password, add="+")
+        self.bind("<FocusOut>", self._hide_password, add="+")
+
+    def _hide_password(self, _event=None):
+        if self.reveal_after_id is not None:
+            try:
+                self.after_cancel(self.reveal_after_id)
+            except tk.TclError:
+                pass
+            self.reveal_after_id = None
+        self.reveal_label.place_forget()
+
+    def toggle_visibility(self):
+        self._hide_password()
+        self.password_visible = not self.password_visible
+        icon_name = "eye" if self.password_visible else "eye_off"
+        icon = get_icon(self, icon_name, "#2563eb" if self.password_visible else "#64748b", 16)
+        self.eye_button.config(image=icon)
+        self.eye_button._icon_image = icon
+        self.config(show="" if self.password_visible else "*")
+        self.eye_button.lift()
+        self.focus_set()
+        self.icursor(tk.END)
+
+    def _handle_key_release(self, event):
+        if self.password_visible:
+            return
+        control_pressed = bool(event.state & 0x4)
+        alt_pressed = bool(event.state & 0x8)
+        if event.char and event.char.isprintable() and not control_pressed and not alt_pressed:
+            self._reveal_last_character()
+
+    def _handle_paste(self, _event=None):
+        self.after_idle(self._reveal_last_character)
+
+    def _reveal_last_character(self):
+        if self.password_visible:
+            return
+        password = self.password_variable.get()
+        cursor = self.index(tk.INSERT)
+        if not password or cursor <= 0:
+            self._hide_password()
+            return
+
+        character_index = cursor - 1
+        bounds = self.bbox(character_index)
+        if not bounds:
+            return
+
+        x, y, width, height = bounds
+        self._hide_password()
+        self.reveal_label.config(text=password[character_index])
+        self.reveal_label.place(x=x, y=y, width=max(width, 1), height=height)
+        self.reveal_label.lift()
+        self.eye_button.lift()
+        self.reveal_after_id = self.after(
+            self.REVEAL_DURATION_MS, self._hide_password
+        )
+
+
+class PasswordCriteriaPanel(tk.Frame):
+    """Hiển thị trạng thái tiêu chí mật khẩu theo thời gian thực."""
+
+    def __init__(
+        self,
+        master,
+        password_variable,
+        confirm_variable=None,
+        current_variable=None,
+        **kwargs,
+    ):
+        super().__init__(master, **kwargs)
+        self.password_variable = password_variable
+        self.confirm_variable = confirm_variable
+        self.current_variable = current_variable
+        self.labels = []
+
+        criteria_count = 3
+        if confirm_variable is not None:
+            criteria_count += 1
+        if current_variable is not None:
+            criteria_count += 1
+        for row in range(criteria_count):
+            label = tk.Label(
+                self,
+                font=("Segoe UI", 9),
+                bg=self.cget("bg"),
+                fg="#64748b",
+                anchor="w",
+            )
+            label.grid(row=row, column=0, sticky="w", pady=1)
+            self.labels.append(label)
+
+        self.password_trace_id = password_variable.trace_add(
+            "write", self._update_status
+        )
+        self.confirm_trace_id = None
+        if confirm_variable is not None:
+            self.confirm_trace_id = confirm_variable.trace_add(
+                "write", self._update_status
+            )
+        self.current_trace_id = None
+        if current_variable is not None:
+            self.current_trace_id = current_variable.trace_add(
+                "write", self._update_status
+            )
+        self.bind("<Destroy>", self._on_destroy, add="+")
+        self._update_status()
+
+    def _update_status(self, *_args):
+        password = self.password_variable.get()
+        criteria = list(get_password_criteria(password))
+        if self.confirm_variable is not None:
+            confirmation = self.confirm_variable.get()
+            criteria.append(
+                (
+                    "Mật khẩu nhập lại trùng khớp",
+                    bool(confirmation) and confirmation == password,
+                )
+            )
+        if self.current_variable is not None:
+            current_password = self.current_variable.get()
+            criteria.append(
+                (
+                    "Mật khẩu mới khác mật khẩu hiện tại",
+                    bool(password)
+                    and bool(current_password)
+                    and password != current_password,
+                )
+            )
+
+        for label, (description, passed) in zip(self.labels, criteria):
+            label.config(
+                text=f"{'✓' if passed else '○'} {description}",
+                fg="#16a34a" if passed else "#64748b",
+            )
+
+    def _on_destroy(self, event):
+        if event.widget is not self:
+            return
+        if self.password_trace_id:
+            self.password_variable.trace_remove("write", self.password_trace_id)
+            self.password_trace_id = None
+        if self.confirm_trace_id:
+            self.confirm_variable.trace_remove("write", self.confirm_trace_id)
+            self.confirm_trace_id = None
+        if self.current_trace_id:
+            self.current_variable.trace_remove("write", self.current_trace_id)
+            self.current_trace_id = None
 
 
 def init_db():
@@ -103,7 +275,7 @@ class ForgotPasswordWindow(tk.Toplevel):
         super().__init__(parent)
         self.title("Khôi phục & Đổi mật khẩu")
         self.iconphoto(False, get_icon(self, "key", "#2563eb"))
-        self.geometry("400x320")
+        self.geometry("400x410")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -125,7 +297,15 @@ class ForgotPasswordWindow(tk.Toplevel):
         ttk.Entry(frame, textvariable=self.var_email, font=("Helvetica", 10)).pack(fill=tk.X, ipady=3, pady=(0, 10))
 
         tk.Label(frame, text="Mật khẩu mới:", font=("Helvetica", 9, "bold"), bg="#ffffff", fg="#334155", anchor="w").pack(fill=tk.X, pady=(2, 2))
-        ttk.Entry(frame, textvariable=self.var_new_pw, show="•", font=("Helvetica", 10)).pack(fill=tk.X, ipady=3, pady=(0, 15))
+        PasswordEntry(
+            frame, variable=self.var_new_pw, font=("Helvetica", 10)
+        ).pack(fill=tk.X, ipady=3, pady=(0, 6))
+
+        PasswordCriteriaPanel(
+            frame,
+            self.var_new_pw,
+            bg="#ffffff",
+        ).pack(fill=tk.X, pady=(0, 14))
 
         btn_reset = icon_button(frame, text="CẬP NHẬT MẬT KHẨU", icon="key", bg="#2563eb", fg="white", bd=0, cursor="hand2", command=self.save_new_password_to_db)
         btn_reset.pack(fill=tk.X, ipady=6)
@@ -158,7 +338,7 @@ class ForgotPasswordWindow(tk.Toplevel):
                         SET mat_khau = %s, so_lan_dang_nhap_sai = 0
                         WHERE id = %s
                         """,
-                        (hash_password(new_pw), row["id"]),
+                        (new_pw, row["id"]),
                     )
                     conn.commit()
                     messagebox.showinfo(
@@ -192,7 +372,6 @@ class LoginForm:
 
         self.var_username = tk.StringVar()
         self.var_password = tk.StringVar()
-        self.var_show_pw = tk.BooleanVar(value=False)
         self.create_widgets()
 
     def create_widgets(self):
@@ -208,7 +387,9 @@ class LoginForm:
         self.entry_user.focus()
 
         tk.Label(main_frame, text="Mật khẩu:", font=("Helvetica", 10, "bold"), fg="#334155", bg="#f4f6f9", anchor="w").pack(fill=tk.X, pady=(5, 2))
-        self.entry_pw = ttk.Entry(main_frame, textvariable=self.var_password, show="•", font=("Helvetica", 11))
+        self.entry_pw = PasswordEntry(
+            main_frame, variable=self.var_password, font=("Helvetica", 11)
+        )
         self.entry_pw.pack(fill=tk.X, ipady=4, pady=(0, 5))
 
         self.entry_pw.bind("<Return>", lambda event: self.handle_login())
@@ -216,8 +397,6 @@ class LoginForm:
 
         sub_frame = tk.Frame(main_frame, bg="#f4f6f9")
         sub_frame.pack(fill=tk.X, pady=(0, 15))
-
-        tk.Checkbutton(sub_frame, text="Hiện mật khẩu", variable=self.var_show_pw, command=lambda: self.entry_pw.config(show="" if self.var_show_pw.get() else "•"), bg="#f4f6f9", font=("Helvetica", 9), fg="#475569").pack(side=tk.LEFT)
 
         btn_forgot = tk.Label(sub_frame, text="Quên mật khẩu?", font=("Helvetica", 9, "underline"), fg="#2563eb", bg="#f4f6f9", cursor="hand2")
         btn_forgot.pack(side=tk.RIGHT)
@@ -267,20 +446,14 @@ class LoginForm:
                     return
 
                 if verify_password(password, row["mat_khau"]):
-                    updates = []
-                    params = []
                     if row["so_lan_dang_nhap_sai"]:
-                        updates.append("so_lan_dang_nhap_sai = 0")
-                    # Tự động nâng cấp mật khẩu dạng chữ của dữ liệu cũ sau khi
-                    # người dùng đăng nhập thành công.
-                    if not row["mat_khau"].startswith("pbkdf2_sha256$"):
-                        updates.append("mat_khau = %s")
-                        params.append(hash_password(password))
-                    if updates:
-                        params.append(row["id"])
                         cursor.execute(
-                            f"UPDATE nguoi_dung SET {', '.join(updates)} WHERE id = %s",
-                            tuple(params),
+                            """
+                            UPDATE nguoi_dung
+                            SET so_lan_dang_nhap_sai = 0
+                            WHERE id = %s
+                            """,
+                            (row["id"],),
                         )
                         conn.commit()
 
@@ -332,7 +505,7 @@ class ChangePasswordWindow(tk.Toplevel):
         self.user_info = user_info
         self.title("Đổi mật khẩu")
         self.iconphoto(False, get_icon(self, "key", "#2563eb"))
-        self.geometry("430x390")
+        self.geometry("430x530")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -340,7 +513,6 @@ class ChangePasswordWindow(tk.Toplevel):
         self.var_current_pw = tk.StringVar()
         self.var_new_pw = tk.StringVar()
         self.var_confirm_pw = tk.StringVar()
-        self.var_show_pw = tk.BooleanVar(value=False)
         self.create_widgets()
 
     def create_widgets(self):
@@ -370,41 +542,90 @@ class ChangePasswordWindow(tk.Toplevel):
                 fg="#334155",
                 anchor="w",
             ).pack(fill=tk.X, pady=(3, 2))
-            entry = ttk.Entry(
-                frame, textvariable=variable, show="•", font=("Segoe UI", 10)
+            entry = PasswordEntry(
+                frame, variable=variable, font=("Segoe UI", 10)
             )
             entry.pack(fill=tk.X, ipady=4, pady=(0, 8))
             entries.append(entry)
 
-        def toggle_passwords():
-            mask = "" if self.var_show_pw.get() else "•"
-            for entry in entries:
-                entry.config(show=mask)
-
-        tk.Checkbutton(
+        PasswordCriteriaPanel(
             frame,
-            text="Hiện mật khẩu",
-            variable=self.var_show_pw,
-            command=toggle_passwords,
+            self.var_new_pw,
+            self.var_confirm_pw,
+            current_variable=self.var_current_pw,
             bg="#ffffff",
-            fg="#475569",
-            activebackground="#ffffff",
-        ).pack(anchor="w", pady=(0, 12))
+        ).pack(fill=tk.X, pady=(0, 12))
+
+        action_frame = tk.Frame(frame, bg="#ffffff")
+        action_frame.pack(fill=tk.X)
+        action_frame.grid_columnconfigure(0, weight=1)
+        action_frame.grid_columnconfigure(1, weight=2)
 
         icon_button(
-            frame,
+            action_frame,
+            text="HỦY",
+            icon="inactive",
+            font=("Segoe UI", 10, "bold"),
+            bg="#e2e8f0",
+            fg="#334155",
+            bd=0,
+            cursor="hand2",
+            command=self.destroy,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 5), ipady=6)
+
+        self.update_password_button = icon_button(
+            action_frame,
             text="CẬP NHẬT MẬT KHẨU",
             icon="key",
             font=("Segoe UI", 10, "bold"),
-            bg="#2563eb",
+            bg="#cbd5e1",
             fg="white",
+            disabledforeground="#64748b",
             bd=0,
-            cursor="hand2",
+            cursor="arrow",
+            state=tk.DISABLED,
             command=self.change_password,
-        ).pack(fill=tk.X, ipady=6)
+        )
+        self.update_password_button.grid(
+            row=0, column=1, sticky="ew", padx=(5, 0), ipady=6
+        )
+
+        self.validation_trace_ids = [
+            variable.trace_add("write", self.update_change_button_state)
+            for variable in (
+                self.var_current_pw,
+                self.var_new_pw,
+                self.var_confirm_pw,
+            )
+        ]
+        self.update_change_button_state()
 
         entries[0].focus_set()
-        entries[-1].bind("<Return>", lambda event: self.change_password())
+        entries[-1].bind("<Return>", self.submit_change_if_valid)
+
+    def update_change_button_state(self, *_args):
+        current_pw = self.var_current_pw.get()
+        new_pw = self.var_new_pw.get()
+        confirm_pw = self.var_confirm_pw.get()
+        criteria_valid = all(
+            passed for _description, passed in get_password_criteria(new_pw)
+        )
+        is_valid = (
+            bool(current_pw)
+            and criteria_valid
+            and confirm_pw == new_pw
+            and new_pw != current_pw
+        )
+
+        self.update_password_button.config(
+            state=tk.NORMAL if is_valid else tk.DISABLED,
+            bg="#2563eb" if is_valid else "#cbd5e1",
+            cursor="hand2" if is_valid else "arrow",
+        )
+
+    def submit_change_if_valid(self, _event=None):
+        if str(self.update_password_button.cget("state")) == str(tk.NORMAL):
+            self.change_password()
 
     def change_password(self):
         current_pw = self.var_current_pw.get()
@@ -468,7 +689,7 @@ class ChangePasswordWindow(tk.Toplevel):
                 SET mat_khau = %s, so_lan_dang_nhap_sai = 0
                 WHERE id = %s
                 """,
-                (hash_password(new_pw), self.user_info["id"]),
+                (new_pw, self.user_info["id"]),
             )
             conn.commit()
             messagebox.showinfo(
@@ -659,7 +880,10 @@ class MainDashboardApp:
 
                     query += " ORDER BY bl.nam DESC, bl.thang DESC"
                     cursor.execute(query, tuple(params))
-                    self.refresh_table(cursor.fetchall())
+                    self.refresh_table(
+                        cursor.fetchall(),
+                        "Không tìm thấy phiếu lương phù hợp!",
+                    )
                 except Error as e:
                     show_database_error(e, "lọc phiếu lương cá nhân")
                 finally:

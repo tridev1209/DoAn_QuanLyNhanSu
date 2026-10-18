@@ -1002,6 +1002,14 @@ class EmployeeManagementForm:
         scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
         self.tree.pack(fill=tk.BOTH, expand=True)
 
+        self.empty_result_label = tk.Label(
+            table_frame,
+            text="",
+            font=("Helvetica", 11, "bold"),
+            bg="white",
+            fg="#64748b",
+        )
+
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
@@ -1618,9 +1626,17 @@ class EmployeeManagementForm:
                 cursor.close()
             conn.close()
 
-    def refresh_table(self, data_list):
+    def refresh_table(self, data_list, empty_message=None):
         for item in self.tree.get_children():
             self.tree.delete(item)
+
+        if not data_list and empty_message:
+            self.empty_result_label.config(text=empty_message)
+            self.empty_result_label.place(relx=0.5, rely=0.5, anchor="center")
+            self.empty_result_label.lift()
+        else:
+            self.empty_result_label.place_forget()
+
         for row in data_list:
             ngay_sinh = (
                 row["ngay_sinh"].strftime("%d/%m/%Y") if row["ngay_sinh"] else ""
@@ -2385,7 +2401,9 @@ class EmployeeManagementForm:
                 """
                 cursor.execute(query, (p, p, p))
 
-            self.refresh_table(cursor.fetchall())
+            self.refresh_table(
+                cursor.fetchall(), "Không tìm thấy nhân viên phù hợp!"
+            )
         except Error as e:
             self.show_operation_error("tìm kiếm nhân viên", e)
         finally:

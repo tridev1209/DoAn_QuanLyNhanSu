@@ -192,6 +192,18 @@ def _draw_icon(image, name, color, size):
         circle(5, 6, 3, width=2)
         line(8, 8, 14, 14, 2)
         line(11, 11, 13, 9, 1)
+    elif name in ("eye", "eye_off"):
+        line(1, 8, 4, 5, 1)
+        line(4, 5, 8, 3, 1)
+        line(8, 3, 12, 5, 1)
+        line(12, 5, 15, 8, 1)
+        line(1, 8, 4, 11, 1)
+        line(4, 11, 8, 13, 1)
+        line(8, 13, 12, 11, 1)
+        line(12, 11, 15, 8, 1)
+        circle(8, 8, 2, width=1)
+        if name == "eye_off":
+            line(2, 2, 14, 14, 2)
     elif name in ("lock", "unlock"):
         rect(3, 7, 13, 14, width=2)
         if name == "lock":

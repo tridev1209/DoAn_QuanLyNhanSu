@@ -334,6 +334,14 @@ class AccountManagementForm:
             expand=True
         )
 
+        self.empty_result_label = tk.Label(
+            table_frame,
+            text="",
+            font=("Helvetica", 11, "bold"),
+            bg="white",
+            fg="#64748b",
+        )
+
         self.tree.bind(
             "<<TreeviewSelect>>",
             self.on_select
@@ -441,10 +449,17 @@ class AccountManagementForm:
     # REFRESH TABLE
     # =========================================================
 
-    def refresh_table(self, rows):
+    def refresh_table(self, rows, empty_message=None):
 
         for item in self.tree.get_children():
             self.tree.delete(item)
+
+        if not rows and empty_message:
+            self.empty_result_label.config(text=empty_message)
+            self.empty_result_label.place(relx=0.5, rely=0.5, anchor="center")
+            self.empty_result_label.lift()
+        else:
+            self.empty_result_label.place_forget()
 
         for row in rows:
 
@@ -577,7 +592,7 @@ class AccountManagementForm:
             )
 
             self.refresh_table(
-                cursor.fetchall()
+                cursor.fetchall(), "Không tìm thấy dữ liệu phù hợp!"
             )
 
         except Error as e:

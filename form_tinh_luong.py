@@ -644,6 +644,14 @@ class PayrollManagementForm:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.pack(fill=tk.BOTH, expand=True)
 
+        self.empty_result_label = tk.Label(
+            table_frame,
+            text="",
+            font=("Helvetica", 11, "bold"),
+            bg="white",
+            fg="#64748b",
+        )
+
         if self.role != "NhanVien":
             self.tree.bind("<Double-1>", self.on_double_click)
     def on_employee_key_release(self, event=None):
@@ -677,8 +685,10 @@ class PayrollManagementForm:
 
         # Không tìm thấy
         if not filtered:
-            self.hide_employee_popup()
             self.clear_employee_details()
+            self.show_employee_popup(
+                [], "Không tìm thấy nhân viên phù hợp!"
+            )
             return
 
         # Không cho popup quá dài
@@ -775,7 +785,7 @@ class PayrollManagementForm:
             self.employee_popup = None
             self.employee_popup_tree = None
 
-    def show_employee_popup(self, values):
+    def show_employee_popup(self, values, empty_message=None):
         """
         Hiển thị popup danh sách nhân viên
         ngay bên dưới ô tìm kiếm.
@@ -796,6 +806,14 @@ class PayrollManagementForm:
             )
 
             popup_frame.pack(fill=tk.BOTH, expand=True)
+
+            self.employee_popup_empty_label = tk.Label(
+                popup_frame,
+                text="",
+                font=("Helvetica", 10, "bold"),
+                bg="white",
+                fg="#64748b",
+            )
 
             # Treeview
             self.employee_popup_tree = ttk.Treeview(
@@ -880,6 +898,16 @@ class PayrollManagementForm:
             )
         self.employee_popup_tree.tag_configure("even", background="#ffffff")
         self.employee_popup_tree.tag_configure("odd", background="#f8fafc")
+
+        if not values and empty_message:
+            self.employee_popup_empty_label.config(text=empty_message)
+            self.employee_popup_empty_label.place(
+                relx=0.5, rely=0.5, anchor="center"
+            )
+            self.employee_popup_empty_label.lift()
+        else:
+            self.employee_popup_empty_label.place_forget()
+
         # Vị trí và kích thước bám theo toàn bộ khung chọn nhân viên.
         self.employee_picker_frame.update_idletasks()
         x = self.employee_picker_frame.winfo_rootx()
@@ -889,7 +917,9 @@ class PayrollManagementForm:
         )
 
         popup_width = max(self.employee_picker_frame.winfo_width(), 330)
-        popup_height = min(max(len(values), 1), 8) * 25 + 28
+        popup_height = (
+            58 if not values else min(max(len(values), 1), 8) * 25 + 28
+        )
 
         self.employee_popup.geometry(
             f"{popup_width}x{popup_height}+{x}+{y}"
@@ -1777,7 +1807,7 @@ class PayrollManagementForm:
                            bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
-                    WHERE bl.ma_nv = %s OR nv.nguoi_dung_id = %s
+                    WHERE (bl.ma_nv = %s OR nv.nguoi_dung_id = %s)
                 """
                 params = [
                     self.user_actual_ma_nv or self.user_login_name,
@@ -1819,15 +1849,29 @@ class PayrollManagementForm:
                 """
                 cursor.execute(query)
 
-            self.refresh_table(cursor.fetchall())
+            rows = cursor.fetchall()
+            empty_message = (
+                "Không tìm thấy phiếu lương phù hợp!"
+                if self.role == "NhanVien"
+                else None
+            )
+            self.refresh_table(rows, empty_message)
         except Error as e:
             show_database_error(e, "tải danh sách bảng lương")
         finally:
             conn.close()
 
-    def refresh_table(self, data_list):
+    def refresh_table(self, data_list, empty_message=None):
         for item in self.tree.get_children():
             self.tree.delete(item)
+
+        if not data_list and empty_message:
+            self.empty_result_label.config(text=empty_message)
+            self.empty_result_label.place(relx=0.5, rely=0.5, anchor="center")
+            self.empty_result_label.lift()
+        else:
+            self.empty_result_label.place_forget()
+
         for row in data_list:
             thang_nam = f"{row['thang']:02d}/{row['nam']}"
             luong_cb = self.format_money_str(row["luong_cb"])
@@ -1894,7 +1938,9 @@ class PayrollManagementForm:
                 """
                 cursor.execute(query, (p, p, p))
 
-            self.refresh_table(cursor.fetchall())
+            self.refresh_table(
+                cursor.fetchall(), "Không tìm thấy dữ liệu phù hợp!"
+            )
         except Error as e:
             show_database_error(e, "tìm kiếm bảng lương")
         finally:

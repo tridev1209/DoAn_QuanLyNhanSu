@@ -45,7 +45,7 @@ ON DUPLICATE KEY UPDATE
 CREATE TABLE IF NOT EXISTS nguoi_dung (
 id INT AUTO_INCREMENT PRIMARY KEY,
 ten_dang_nhap VARCHAR(50) NOT NULL UNIQUE, -- Trùng với Mã NV (ví dụ: NS001, KT001)
-mat_khau VARCHAR(100) NOT NULL,            -- Lưu chuỗi mã hóa SHA-256
+mat_khau VARCHAR(100) NOT NULL,            -- Lưu mật khẩu dạng chữ theo ứng dụng
 ho_ten VARCHAR(100) NOT NULL,
 email VARCHAR(100) NOT NULL UNIQUE,
 vai_tro ENUM('Admin', 'TruongPhong', 'NhanVien') NOT NULL DEFAULT 'NhanVien',
