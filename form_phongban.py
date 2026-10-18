@@ -64,6 +64,19 @@ class DepartmentPositionForm:
         var.set(cleaned)
         event.widget.icursor(tk.END)
 
+    def validate_ten_chuc_vu(self, proposed_value):
+        """Tên chức vụ chỉ được chứa các ký tự không phải chữ số."""
+        return not any(char.isdigit() for char in proposed_value)
+
+    def validate_chuc_vu_input(self, ten):
+        if any(char.isdigit() for char in ten):
+            messagebox.showwarning(
+                "Tên chức vụ không hợp lệ",
+                "Tên chức vụ không được chứa chữ số!",
+            )
+            return False
+        return True
+
     def create_widgets(self):
         tk.Label(
             self.parent,
@@ -480,11 +493,14 @@ class DepartmentPositionForm:
             bg="#f8fafc",
             font=("Helvetica", 10),
         ).grid(row=0, column=2, sticky="w", pady=5, padx=(15, 0))
+        validate_ten_cv = self.parent.register(self.validate_ten_chuc_vu)
         tk.Entry(
             input_cv,
             textvariable=self.var_cv_ten,
             width=25,
             font=("Helvetica", 10),
+            validate="key",
+            validatecommand=(validate_ten_cv, "%P"),
         ).grid(row=0, column=3, padx=5, pady=5, sticky="w")
 
         tk.Label(
@@ -667,6 +683,8 @@ class DepartmentPositionForm:
                 "Cảnh báo", "Vui lòng nhập đầy đủ Mã chức vụ và Tên chức vụ!"
             )
             return
+        if not self.validate_chuc_vu_input(ten):
+            return
 
         conn = get_db_connection()
         if not conn:
@@ -703,6 +721,8 @@ class DepartmentPositionForm:
             messagebox.showwarning(
                 "Cảnh báo", "Vui lòng chọn chức vụ cần sửa!"
             )
+            return
+        if not self.validate_chuc_vu_input(ten):
             return
 
         conn = get_db_connection()

@@ -1,7 +1,8 @@
-import csv
 import datetime
 import re
 import tkinter as tk
+from xml.sax.saxutils import escape
+from zipfile import ZIP_DEFLATED, ZipFile
 from tkinter import filedialog, messagebox, ttk
 from db_connection import get_db_connection
 from mysql.connector import Error
@@ -196,15 +197,14 @@ class PayrollManagementForm:
             )
             tk.Button(
                 self.employee_picker_frame,
-                text="⌄",
-                font=("Helvetica", 11, "bold"),
-                fg="#475569",
+                image=get_icon(self.parent, "chevron_down", "#475569"),
                 bg="white",
                 activebackground="#eff6ff",
-                activeforeground="#2563eb",
                 relief="flat",
                 bd=0,
-                width=3,
+                width=28,
+                padx=0,
+                pady=0,
                 cursor="hand2",
                 command=self.show_all_employee_options,
             ).pack(side=tk.RIGHT, fill=tk.Y)
@@ -461,7 +461,7 @@ class PayrollManagementForm:
 
         icon_button(
             btn_sub_frame,
-            text="Xuất Bảng Lương (CSV)",
+            text="Xuất Bảng Lương (Excel)",
             icon="export",
             bg="#10b981",
             fg="white",
@@ -469,7 +469,7 @@ class PayrollManagementForm:
             pady=5,
             bd=0,
             cursor="hand2",
-            command=self.xuat_csv,
+            command=self.xuat_excel,
         ).pack(side=tk.LEFT, padx=3)
 
         # Search Sub-frame
@@ -947,9 +947,10 @@ class PayrollManagementForm:
         # Đóng popup
         self.hide_employee_popup()
 
-        # Đưa con trỏ về cuối
+        # Luôn để mã nhân viên ở đầu ô nhập được nhìn thấy đầy đủ.
         self.cb_ma_nv.focus_set()
-        self.cb_ma_nv.icursor(tk.END)
+        self.cb_ma_nv.icursor(0)
+        self.cb_ma_nv.xview_moveto(0)
 
         # Nạp thông tin nhân viên
         self.on_employee_selected(None)
@@ -1510,40 +1511,257 @@ class PayrollManagementForm:
             finally:
                 conn.close()
 
-    def xuat_csv(self):
+    def xuat_excel(self):
+        items = self.tree.get_children()
+        if not items:
+            messagebox.showwarning(
+                "Không có dữ liệu",
+                "Không có dữ liệu bảng lương để xuất.",
+                parent=self.parent,
+            )
+            return
+
+        now = datetime.datetime.now()
+        if self.role == "NhanVien":
+            ma_nv = self.user_actual_ma_nv or self.user_login_name or "nhan_vien"
+            nam = self.var_filter_nam.get().strip() or str(now.year)
+            thang = self.var_filter_thang.get().strip()
+            period_suffix = (
+                f"_{int(thang):02d}" if thang.isdigit() else "_tat_ca"
+            )
+            initial_filename = f"bang_luong_{ma_nv}_{nam}{period_suffix}.xlsx"
+        else:
+            initial_filename = f"bang_luong_{now:%Y_%m}.xlsx"
+
         filepath = filedialog.asksaveasfilename(
-            defaultextension=".csv",
+            defaultextension=".xlsx",
+            initialfile=initial_filename,
             filetypes=[
-                ("File CSV (Excel)", "*.csv"),
+                ("Excel Workbook", "*.xlsx"),
                 ("Tất cả các file", "*.*"),
             ],
-            title="Xuất bảng lương ra file CSV",
+            title="Xuất bảng lương ra file Excel",
+            parent=self.parent,
         )
         if not filepath:
             return
 
         try:
-            with open(filepath, mode="w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    "Mã NV",
-                    "Họ và Tên",
-                    "Tháng/Năm",
-                    "Lương CB (đ)",
-                    "Ngày công",
-                    "Số giờ OT",
-                    "Lương OT (đ)",
-                    "Phụ cấp (đ)",
-                    "Khoản trừ (đ)",
-                    "Thực nhận (đ)",
-                ])
-                for item in self.tree.get_children():
-                    writer.writerow(self.tree.item(item, "values"))
+            rows = []
+            totals = [0, 0, 0.0, 0, 0, 0, 0]
+            for index, item in enumerate(items, start=1):
+                values = list(self.tree.item(item, "values"))
+                thang, nam = self.split_payroll_period(values[2])
+                row = [
+                    index,
+                    str(values[0]),
+                    str(values[1]),
+                    thang,
+                    nam,
+                    self.export_integer(values[3]),
+                    self.export_number(values[4]),
+                    self.export_number(values[5]),
+                    self.export_integer(values[6]),
+                    self.export_integer(values[7]),
+                    self.export_integer(values[8]),
+                    self.export_integer(values[9]),
+                ]
+                totals[0] += row[5]
+                totals[1] += row[6]
+                totals[2] += row[7]
+                totals[3] += row[8]
+                totals[4] += row[9]
+                totals[5] += row[10]
+                totals[6] += row[11]
+                rows.append(row)
+
+            self.write_payroll_xlsx(filepath, now, rows, totals)
             messagebox.showinfo(
-                "Thành công", f"Đã xuất file thành công tại:\n{filepath}"
+                "Thành công",
+                f"Đã xuất thành công file Excel tại:\n{filepath}",
+                parent=self.parent,
             )
         except Exception as e:
-            show_file_error(e, "xuất bảng lương")
+            show_file_error(e, "xuất bảng lương", parent=self.parent)
+
+    def get_export_scope(self):
+        if self.role == "NhanVien":
+            thang = self.var_filter_thang.get().strip()
+            nam = self.var_filter_nam.get().strip()
+            ky_luong = (
+                f"tháng {int(thang):02d}/{nam}"
+                if thang.isdigit()
+                else f"tất cả các tháng năm {nam}"
+            )
+            ma_nv = self.user_actual_ma_nv or self.user_login_name
+            return f"Nhân viên {ma_nv} - {ky_luong}"
+        if self.role == "TruongPhong" and self.user_ma_phong_ban:
+            return f"Phòng ban {self.user_ma_phong_ban} - dữ liệu đang hiển thị"
+        return "Toàn bộ nhân viên - dữ liệu đang hiển thị"
+
+    @staticmethod
+    def split_payroll_period(value):
+        parts = str(value).split("/", 1)
+        if len(parts) != 2:
+            return "", ""
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            return parts[0], parts[1]
+
+    @staticmethod
+    def export_integer(value):
+        digits = re.sub(r"[^0-9-]", "", str(value))
+        return int(digits) if digits not in ("", "-") else 0
+
+    @staticmethod
+    def export_number(value):
+        try:
+            number = float(str(value).replace(",", "."))
+            return int(number) if number.is_integer() else number
+        except (TypeError, ValueError):
+            return 0
+
+    def write_payroll_xlsx(self, filepath, exported_at, rows, totals):
+        """Tạo XLSX bằng thư viện chuẩn để giữ kiểu số và độ rộng cột."""
+        headers = [
+            "STT", "Mã NV", "Họ và Tên", "Tháng", "Năm", "Lương CB (đ)",
+            "Ngày công", "Số giờ OT", "Lương OT (đ)", "Phụ cấp (đ)",
+            "Khoản trừ (đ)", "Thực nhận (đ)",
+        ]
+        column_widths = [6, 16, 32, 10, 10, 20, 14, 14, 20, 18, 18, 20]
+
+        def text_cell(ref, value, style=4):
+            value = escape(str(value or ""))
+            return (
+                f'<c r="{ref}" t="inlineStr" s="{style}">'
+                f'<is><t xml:space="preserve">{value}</t></is></c>'
+            )
+
+        def number_cell(ref, value, style=5):
+            return f'<c r="{ref}" s="{style}"><v>{value}</v></c>'
+
+        sheet_rows = [
+            f'<row r="1" ht="26" customHeight="1">{text_cell("A1", "BÁO CÁO BẢNG LƯƠNG NHÂN VIÊN", 1)}</row>',
+            f'<row r="2">{text_cell("A2", f"Thời điểm xuất: {exported_at:%d/%m/%Y %H:%M}", 2)}</row>',
+            f'<row r="3">{text_cell("A3", f"Phạm vi: {self.get_export_scope()}", 2)}</row>',
+            '<row r="4"/>',
+        ]
+
+        header_cells = "".join(
+            text_cell(f"{chr(65 + index)}5", header, 3)
+            for index, header in enumerate(headers)
+        )
+        sheet_rows.append(
+            f'<row r="5" ht="32" customHeight="1">{header_cells}</row>'
+        )
+
+        for row_number, row in enumerate(rows, start=6):
+            cells = [
+                number_cell(f"A{row_number}", row[0]),
+                text_cell(f"B{row_number}", row[1]),
+                text_cell(f"C{row_number}", row[2]),
+                number_cell(f"D{row_number}", row[3]),
+                number_cell(f"E{row_number}", row[4]),
+                number_cell(f"F{row_number}", row[5]),
+                number_cell(f"G{row_number}", row[6], 6),
+                number_cell(f"H{row_number}", row[7], 6),
+                number_cell(f"I{row_number}", row[8]),
+                number_cell(f"J{row_number}", row[9]),
+                number_cell(f"K{row_number}", row[10]),
+                number_cell(f"L{row_number}", row[11]),
+            ]
+            sheet_rows.append(f'<row r="{row_number}">{"".join(cells)}</row>')
+
+        total_row = len(rows) + 7
+        total_cells = [
+            text_cell(f"A{total_row}", "", 7),
+            text_cell(f"B{total_row}", "", 7),
+            text_cell(f"C{total_row}", "TỔNG CỘNG", 7),
+            text_cell(f"D{total_row}", "", 7),
+            text_cell(f"E{total_row}", "", 7),
+            number_cell(f"F{total_row}", totals[0], 8),
+            number_cell(f"G{total_row}", totals[1], 9),
+            number_cell(f"H{total_row}", totals[2], 9),
+            number_cell(f"I{total_row}", totals[3], 8),
+            number_cell(f"J{total_row}", totals[4], 8),
+            number_cell(f"K{total_row}", totals[5], 8),
+            number_cell(f"L{total_row}", totals[6], 8),
+        ]
+        sheet_rows.append(
+            f'<row r="{total_row}" ht="22" customHeight="1">'
+            f'{"".join(total_cells)}</row>'
+        )
+
+        columns_xml = "".join(
+            f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>'
+            for index, width in enumerate(column_widths, start=1)
+        )
+        last_data_row = len(rows) + 5
+        worksheet_xml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="5" topLeftCell="A6" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <sheetFormatPr defaultRowHeight="20"/>
+  <cols>{columns_xml}</cols>
+  <sheetData>{"".join(sheet_rows)}</sheetData>
+  <autoFilter ref="A5:L{last_data_row}"/>
+  <mergeCells count="3"><mergeCell ref="A1:L1"/><mergeCell ref="A2:L2"/><mergeCell ref="A3:L3"/></mergeCells>
+</worksheet>'''
+
+        content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>'''
+        root_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>'''
+        workbook_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Bảng lương" sheetId="1" r:id="rId1"/></sheets>
+</workbook>'''
+        workbook_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>'''
+        styles_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="4">
+    <font><sz val="11"/><name val="Calibri"/></font>
+    <font><b/><sz val="16"/><color rgb="FF1E293B"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><color rgb="FF0F172A"/><name val="Calibri"/></font>
+  </fonts>
+  <fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2563EB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDBEAFE"/><bgColor indexed="64"/></patternFill></fill></fills>
+  <borders count="2"><border/><border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="10">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"><alignment vertical="center"/></xf>
+    <xf numFmtId="3" fontId="0" fillId="0" borderId="1" xfId="0"><alignment horizontal="right" vertical="center"/></xf>
+    <xf numFmtId="4" fontId="0" fillId="0" borderId="1" xfId="0"><alignment horizontal="right" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0"><alignment vertical="center"/></xf>
+    <xf numFmtId="3" fontId="3" fillId="3" borderId="1" xfId="0"><alignment horizontal="right" vertical="center"/></xf>
+    <xf numFmtId="4" fontId="3" fillId="3" borderId="1" xfId="0"><alignment horizontal="right" vertical="center"/></xf>
+  </cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>'''
+
+        with ZipFile(filepath, "w", ZIP_DEFLATED) as workbook:
+            workbook.writestr("[Content_Types].xml", content_types)
+            workbook.writestr("_rels/.rels", root_rels)
+            workbook.writestr("xl/workbook.xml", workbook_xml)
+            workbook.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+            workbook.writestr("xl/styles.xml", styles_xml)
+            workbook.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
 
     def load_data(self):
         conn = get_db_connection()

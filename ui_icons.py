@@ -181,6 +181,9 @@ def _draw_icon(image, name, color, size):
     elif name == "search":
         circle(6, 6, 4, width=2)
         line(9, 9, 14, 14, 2)
+    elif name == "chevron_down":
+        line(3, 6, 8, 11, 2)
+        line(8, 11, 13, 6, 2)
     elif name == "save":
         rect(2, 2, 13, 14, width=2)
         rect(5, 2, 10, 6, width=1)

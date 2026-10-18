@@ -214,7 +214,7 @@ class AccountManagementForm:
 
         self.search_placeholder = tk.Label(
             self.entry_search,
-            text="Nhập mã NV, phòng ban, họ tên, tên đăng nhập hoặc email...",
+            text="Nhập ID, mã NV, phòng ban, họ tên, tên đăng nhập hoặc email...",
             bg="white",
             fg="#94a3b8",
             font=("Helvetica", 10),
@@ -241,6 +241,19 @@ class AccountManagementForm:
             pady=4,
             command=self.search_accounts,
         ).pack(side=tk.LEFT, padx=2)
+
+        self.btn_tat_ca = tk.Button(
+            search_frame,
+            text="Tất cả",
+            font=("Helvetica", 10),
+            bg="#64748b",
+            fg="white",
+            padx=8,
+            pady=4,
+            bd=0,
+            command=self.show_all_accounts,
+        )
+        self.btn_tat_ca.pack(side=tk.LEFT, padx=2)
 
         # =====================================================
         # BẢNG TÀI KHOẢN
@@ -345,6 +358,12 @@ class AccountManagementForm:
     def on_search_enter(self, event=None):
         self.search_accounts()
         return "break"
+
+    def show_all_accounts(self):
+        self.var_search.set("")
+        self.btn_tat_ca.focus_set()
+        self.load_accounts()
+        self.parent.after_idle(self.update_search_placeholder)
 
     # =========================================================
     # LOAD ACCOUNT
@@ -543,7 +562,8 @@ class AccountManagementForm:
                 LEFT JOIN phong_ban pb
                     ON pb.ma_phong_ban = nv.ma_phong_ban
                 WHERE
-                    nd.ten_dang_nhap LIKE %s
+                    CAST(nd.id AS CHAR) LIKE %s
+                    OR nd.ten_dang_nhap LIKE %s
                     OR nd.ho_ten LIKE %s
                     OR nd.email LIKE %s
                     OR nv.ma_nv LIKE %s
@@ -553,7 +573,7 @@ class AccountManagementForm:
 
             cursor.execute(
                 query,
-                (p, p, p, p, p)
+                (p, p, p, p, p, p)
             )
 
             self.refresh_table(

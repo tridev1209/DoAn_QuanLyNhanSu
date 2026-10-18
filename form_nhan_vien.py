@@ -518,7 +518,7 @@ class EmployeeManagementForm:
 
         tk.Label(
             input_frame,
-            text="Mã NV (Tự/Sửa) (*):",
+            text="Mã NV (*):",
             bg="#f8fafc",
             font=("Helvetica", 10),
         ).grid(row=0, column=2, sticky="w", pady=5, padx=(15, 0))
