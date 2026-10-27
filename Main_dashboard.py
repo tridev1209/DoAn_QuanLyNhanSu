@@ -8,6 +8,10 @@ from user_error import show_database_error
 
 
 MAX_FAILED_LOGIN_ATTEMPTS = 5
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "123456"
+DEFAULT_ADMIN_FULL_NAME = "Quản Trị Viên Hệ Thống"
+DEFAULT_ADMIN_EMAIL = "admin@company.com"
 
 
 def verify_password(password, stored_password):
@@ -226,11 +230,81 @@ class PasswordCriteriaPanel(tk.Frame):
             self.current_trace_id = None
 
 
+def get_available_admin_email(cursor):
+    """Chọn email quản trị chưa được tài khoản khác sử dụng."""
+    local_part, domain = DEFAULT_ADMIN_EMAIL.split("@", 1)
+    candidate = DEFAULT_ADMIN_EMAIL
+    suffix = 1
+    while True:
+        cursor.execute(
+            "SELECT id FROM nguoi_dung WHERE email = %s LIMIT 1",
+            (candidate,),
+        )
+        if not cursor.fetchone():
+            return candidate
+        candidate = f"{local_part}{suffix}@{domain}"
+        suffix += 1
+
+
+def ensure_default_admin(cursor):
+    """Đảm bảo luôn có tài khoản admin mặc định nhưng không ghi đè mật khẩu."""
+    cursor.execute(
+        """
+        SELECT id, vai_tro, trang_thai, so_lan_dang_nhap_sai
+        FROM nguoi_dung
+        WHERE ten_dang_nhap = %s
+        LIMIT 1
+        """,
+        (DEFAULT_ADMIN_USERNAME,),
+    )
+    admin = cursor.fetchone()
+
+    if admin:
+        admin_id, role, status, failed_attempts = admin
+        if role != "Admin" or status != 1 or failed_attempts:
+            cursor.execute(
+                """
+                UPDATE nguoi_dung
+                SET vai_tro = 'Admin',
+                    trang_thai = 1,
+                    so_lan_dang_nhap_sai = 0
+                WHERE id = %s
+                """,
+                (admin_id,),
+            )
+        return False
+
+    admin_email = get_available_admin_email(cursor)
+    cursor.execute(
+        """
+        INSERT INTO nguoi_dung
+        (
+            ten_dang_nhap,
+            mat_khau,
+            ho_ten,
+            email,
+            vai_tro,
+            trang_thai,
+            so_lan_dang_nhap_sai
+        )
+        VALUES (%s, %s, %s, %s, 'Admin', 1, 0)
+        """,
+        (
+            DEFAULT_ADMIN_USERNAME,
+            DEFAULT_ADMIN_PASSWORD,
+            DEFAULT_ADMIN_FULL_NAME,
+            admin_email,
+        ),
+    )
+    return True
+
+
 def init_db():
-    """Tự động khởi tạo bảng nguoi_dung và dữ liệu mẫu với mật khẩu dạng chữ"""
+    """Khởi tạo bảng tài khoản và bảo đảm có tài khoản Admin mặc định."""
     conn = get_db_connection()
     if not conn:
         return
+    cursor = None
     try:
         cursor = conn.cursor()
         cursor.execute("""
@@ -258,6 +332,8 @@ def init_db():
                 ADD COLUMN so_lan_dang_nhap_sai INT UNSIGNED NOT NULL DEFAULT 0
                 """
             )
+
+        ensure_default_admin(cursor)
         conn.commit()
 
       
@@ -265,7 +341,8 @@ def init_db():
         print(f"Lỗi khởi tạo CSDL: {e}")
     finally:
         if conn and conn.is_connected():
-            cursor.close()
+            if cursor:
+                cursor.close()
             conn.close()
 # ==============================================================================
 # CỬA SỔ QUÊN MẬT KHẨU
@@ -379,7 +456,7 @@ class LoginForm:
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(main_frame, text="ĐĂNG NHẬP", font=("Helvetica", 18, "bold"), fg="#1e293b", bg="#f4f6f9").pack(pady=(0, 5))
-        tk.Label(main_frame, text="Hệ thống Quản lý Nhân sự - MySQL", font=("Helvetica", 10, "italic"), fg="#64748b", bg="#f4f6f9").pack(pady=(0, 15))
+        tk.Label(main_frame, text="Hệ thống Quản lý Nhân sự ", font=("Helvetica", 10, "italic"), fg="#64748b", bg="#f4f6f9").pack(pady=(0, 15))
 
         tk.Label(main_frame, text="Tên đăng nhập:", font=("Helvetica", 10, "bold"), fg="#334155", bg="#f4f6f9", anchor="w").pack(fill=tk.X, pady=(5, 2))
         self.entry_user = ttk.Entry(main_frame, textvariable=self.var_username, font=("Helvetica", 11))

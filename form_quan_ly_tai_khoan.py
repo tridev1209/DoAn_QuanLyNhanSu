@@ -244,7 +244,7 @@ class AccountManagementForm:
 
         self.btn_tat_ca = tk.Button(
             search_frame,
-            text="Tất cả",
+            text="Xóa tìm kiếm",
             font=("Helvetica", 10),
             bg="#64748b",
             fg="white",
@@ -415,21 +415,32 @@ class AccountManagementForm:
             )
 
             query = """
-                SELECT
-                    nd.id,
-                    nv.ma_nv,
-                    pb.ten_phong_ban,
-                    nd.ho_ten,
-                    nd.ten_dang_nhap,
-                    nd.email,
-                    nd.vai_tro,
-                    nd.trang_thai
-                FROM nguoi_dung nd
-                LEFT JOIN nhan_vien nv
-                    ON nv.nguoi_dung_id = nd.id
-                LEFT JOIN phong_ban pb
-                    ON pb.ma_phong_ban = nv.ma_phong_ban
-                ORDER BY nd.id ASC
+                SELECT *
+                FROM (
+                    SELECT
+                        nd.id, nv.ma_nv, pb.ten_phong_ban, nd.ho_ten,
+                        nd.ten_dang_nhap, nd.email, nd.vai_tro, nd.trang_thai,
+                        0 AS account_missing
+                    FROM nguoi_dung nd
+                    LEFT JOIN nhan_vien nv ON nv.nguoi_dung_id = nd.id
+                    LEFT JOIN phong_ban pb ON pb.ma_phong_ban = nv.ma_phong_ban
+
+                    UNION ALL
+
+                    SELECT
+                        NULL AS id, nv.ma_nv, pb.ten_phong_ban, nv.ho_ten,
+                        NULL AS ten_dang_nhap, nv.email, NULL AS vai_tro,
+                        NULL AS trang_thai, 1 AS account_missing
+                    FROM nhan_vien nv
+                    LEFT JOIN nguoi_dung nd ON nd.id = nv.nguoi_dung_id
+                    LEFT JOIN phong_ban pb ON pb.ma_phong_ban = nv.ma_phong_ban
+                    WHERE nd.id IS NULL
+                ) AS accounts
+                ORDER BY
+                    CASE WHEN trang_thai = 0 THEN 1 ELSE 0 END ASC,
+                    account_missing ASC,
+                    id ASC,
+                    ma_nv ASC
             """
 
             cursor.execute(query)
@@ -469,14 +480,17 @@ class AccountManagementForm:
                 "NhanVien": "Nhân viên"
             }.get(
                 row["vai_tro"],
-                row["vai_tro"]
+                row["vai_tro"] or ""
             )
 
-            status_display = (
-                "Hoạt động"
-                if row["trang_thai"] == 1
-                else "Đã khóa"
-            )
+            if row.get("account_missing"):
+                status_display = "Không có tài khoản"
+            else:
+                status_display = (
+                    "Hoạt động"
+                    if row["trang_thai"] == 1
+                    else "Đã khóa"
+                )
 
             self.tree.insert(
                 "",
@@ -562,28 +576,39 @@ class AccountManagementForm:
             p = f"%{keyword}%"
 
             query = """
-                SELECT
-                    nd.id,
-                    nv.ma_nv,
-                    pb.ten_phong_ban,
-                    nd.ho_ten,
-                    nd.ten_dang_nhap,
-                    nd.email,
-                    nd.vai_tro,
-                    nd.trang_thai
-                FROM nguoi_dung nd
-                LEFT JOIN nhan_vien nv
-                    ON nv.nguoi_dung_id = nd.id
-                LEFT JOIN phong_ban pb
-                    ON pb.ma_phong_ban = nv.ma_phong_ban
+                SELECT *
+                FROM (
+                    SELECT
+                        nd.id, nv.ma_nv, pb.ten_phong_ban, nd.ho_ten,
+                        nd.ten_dang_nhap, nd.email, nd.vai_tro, nd.trang_thai,
+                        0 AS account_missing
+                    FROM nguoi_dung nd
+                    LEFT JOIN nhan_vien nv ON nv.nguoi_dung_id = nd.id
+                    LEFT JOIN phong_ban pb ON pb.ma_phong_ban = nv.ma_phong_ban
+
+                    UNION ALL
+
+                    SELECT
+                        NULL AS id, nv.ma_nv, pb.ten_phong_ban, nv.ho_ten,
+                        NULL AS ten_dang_nhap, nv.email, NULL AS vai_tro,
+                        NULL AS trang_thai, 1 AS account_missing
+                    FROM nhan_vien nv
+                    LEFT JOIN nguoi_dung nd ON nd.id = nv.nguoi_dung_id
+                    LEFT JOIN phong_ban pb ON pb.ma_phong_ban = nv.ma_phong_ban
+                    WHERE nd.id IS NULL
+                ) AS accounts
                 WHERE
-                    CAST(nd.id AS CHAR) LIKE %s
-                    OR nd.ten_dang_nhap LIKE %s
-                    OR nd.ho_ten LIKE %s
-                    OR nd.email LIKE %s
-                    OR nv.ma_nv LIKE %s
-                    OR pb.ten_phong_ban LIKE %s
-                ORDER BY nd.id ASC
+                    CAST(id AS CHAR) LIKE %s
+                    OR ten_dang_nhap LIKE %s
+                    OR ho_ten LIKE %s
+                    OR email LIKE %s
+                    OR ma_nv LIKE %s
+                    OR ten_phong_ban LIKE %s
+                ORDER BY
+                    CASE WHEN trang_thai = 0 THEN 1 ELSE 0 END ASC,
+                    account_missing ASC,
+                    id ASC,
+                    ma_nv ASC
             """
 
             cursor.execute(

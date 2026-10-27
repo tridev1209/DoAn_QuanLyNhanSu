@@ -19,12 +19,3 @@ def get_db_connection():
     except Error as e:
         print(f"Lỗi kết nối MySQL: {e}")
         return None
-# Kiểm tra MySQL trước khi đụng vào các form
-# if __name__ == "__main__":
-#     conn = get_db_connection()
-
-#     if conn:
-#         print("Kết nối MySQL thành công!")
-#         conn.close()
-#     else:
-#         print("Kết nối MySQL thất bại!")

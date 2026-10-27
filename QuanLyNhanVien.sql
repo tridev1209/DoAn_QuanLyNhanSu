@@ -3,8 +3,6 @@ CHARACTER SET utf8mb4
 COLLATE utf8mb4_unicode_ci;
 
 use QuanLyNhanVien;
-
-
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS phong_ban (
 ma_phong_ban VARCHAR(10) PRIMARY KEY,
@@ -38,7 +36,6 @@ AS new_cv
 ON DUPLICATE KEY UPDATE
     ten_chuc_vu = new_cv.ten_chuc_vu,
     phu_cap = new_cv.phu_cap;
-
 -- ==============================================================================
 -- 4. TẠO BẢNG NGƯỜI DÙNG & TÀI KHOẢN (nguoi_dung)
 -- ==============================================================================
@@ -52,8 +49,6 @@ vai_tro ENUM('Admin', 'TruongPhong', 'NhanVien') NOT NULL DEFAULT 'NhanVien',
 trang_thai TINYINT(1) DEFAULT 1,            -- 1: Hoạt động, 0: Khóa
 ngay_tao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
-
-
 -- ==============================================================================
 -- 5. TẠO BẢNG NHÂN VIÊN (nhan_vien)
 -- ==============================================================================
@@ -71,27 +66,18 @@ ma_chuc_vu VARCHAR(10),
 luong_co_ban DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
 trang_thai VARCHAR(30) DEFAULT 'Đang làm việc',
 nguoi_dung_id INT UNIQUE, -- Liên kết 1-1 với bảng nguoi_dung
-
-
 CONSTRAINT chk_nhan_vien_ngay_lam_viec CHECK (
     ngay_nghi_viec IS NULL OR ngay_nghi_viec >= ngay_vao_lam
 ),
-
 KEY idx_nhan_vien_ngay_lam (ngay_vao_lam, ngay_nghi_viec),
-
 CONSTRAINT fk_nv_phongban FOREIGN KEY (ma_phong_ban)
     REFERENCES phong_ban(ma_phong_ban) ON DELETE SET NULL ON UPDATE CASCADE,
-
 CONSTRAINT fk_nv_chucvu FOREIGN KEY (ma_chuc_vu)
     REFERENCES chuc_vu(ma_chuc_vu) ON DELETE SET NULL ON UPDATE CASCADE,
-
 CONSTRAINT fk_nv_nguoidung FOREIGN KEY (nguoi_dung_id)
     REFERENCES nguoi_dung(id) ON DELETE CASCADE ON UPDATE CASCADE
-
 ) ENGINE=InnoDB;
 
-
---
 CREATE TABLE IF NOT EXISTS bang_luong (
     id INT AUTO_INCREMENT PRIMARY KEY,
     ma_nv VARCHAR(20) NOT NULL,
@@ -100,16 +86,13 @@ CREATE TABLE IF NOT EXISTS bang_luong (
     luong_cb DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
     ngay_cong TINYINT UNSIGNED NOT NULL DEFAULT 24,
     gio_ot DECIMAL(4, 1) UNSIGNED NOT NULL DEFAULT 0.0,
-
     -- Chỉ lưu giờ OT; tiền OT được sinh tự động để không thể sai lệch công thức.
     luong_ot DECIMAL(15, 2) GENERATED ALWAYS AS (
         ROUND((luong_cb / (24.0 * 8.0)) * gio_ot * 1.5, 2)
     ) STORED,
-
     -- Chỉ có một loại phụ cấp: phụ cấp chức vụ, lấy từ chuc_vu.phu_cap khi lập lương.
     phu_cap DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
     khoan_tru DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
-
     -- Không cho thực nhận âm; công thức này đồng nhất với form tính lương.
     thuc_nhan DECIMAL(15, 2) GENERATED ALWAYS AS (
         GREATEST(
@@ -122,9 +105,7 @@ CREATE TABLE IF NOT EXISTS bang_luong (
             )
         )
     ) STORED,
-
     ngay_tinh DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
     CONSTRAINT chk_bang_luong_thang CHECK (thang BETWEEN 1 AND 12),
     CONSTRAINT chk_bang_luong_nam CHECK (nam BETWEEN 2000 AND 2100),
     CONSTRAINT chk_bang_luong_ngay_cong CHECK (ngay_cong BETWEEN 0 AND 24),
@@ -142,78 +123,10 @@ CREATE TABLE IF NOT EXISTS bang_luong (
         REFERENCES nhan_vien(ma_nv) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
--- Nâng cấp an toàn cho CSDL đã tạo từ phiên bản cũ.
-SET @add_ngay_vao_lam = IF(
-    (SELECT COUNT(*) FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = DATABASE()
-       AND TABLE_NAME = 'nhan_vien'
-       AND COLUMN_NAME = 'ngay_vao_lam') = 0,
-    'ALTER TABLE nhan_vien ADD COLUMN ngay_vao_lam DATE NULL AFTER ngay_sinh',
-    'SELECT 1'
-);
-PREPARE stmt FROM @add_ngay_vao_lam;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-SET @add_ngay_nghi_viec = IF(
-    (SELECT COUNT(*) FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = DATABASE()
-       AND TABLE_NAME = 'nhan_vien'
-       AND COLUMN_NAME = 'ngay_nghi_viec') = 0,
-    'ALTER TABLE nhan_vien ADD COLUMN ngay_nghi_viec DATE NULL AFTER ngay_vao_lam',
-    'SELECT 1'
-);
-PREPARE stmt FROM @add_ngay_nghi_viec;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-UPDATE nhan_vien nv
-LEFT JOIN (
-    SELECT ma_nv, MIN(STR_TO_DATE(CONCAT(nam, '-', LPAD(thang, 2, '0'), '-01'), '%Y-%m-%d')) AS ngay_dau_tien
-    FROM bang_luong
-    GROUP BY ma_nv
-) lich_su ON lich_su.ma_nv = nv.ma_nv
-SET nv.ngay_vao_lam = COALESCE(nv.ngay_vao_lam, lich_su.ngay_dau_tien, CURRENT_DATE());
-
--- Dữ liệu cũ không lưu ngày nghỉ; ngày chạy nâng cấp được dùng làm mốc ban đầu.
-UPDATE nhan_vien
-SET ngay_nghi_viec = CURRENT_DATE()
-WHERE trang_thai = 'Đã nghỉ việc' AND ngay_nghi_viec IS NULL;
-
-ALTER TABLE nhan_vien MODIFY COLUMN ngay_vao_lam DATE NOT NULL;
-
-SET @add_index_ngay_lam = IF(
-    (SELECT COUNT(*) FROM information_schema.STATISTICS
-     WHERE TABLE_SCHEMA = DATABASE()
-       AND TABLE_NAME = 'nhan_vien'
-       AND INDEX_NAME = 'idx_nhan_vien_ngay_lam') = 0,
-    'ALTER TABLE nhan_vien ADD INDEX idx_nhan_vien_ngay_lam (ngay_vao_lam, ngay_nghi_viec)',
-    'SELECT 1'
-);
-PREPARE stmt FROM @add_index_ngay_lam;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-SET @add_check_ngay_lam = IF(
-    (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
-     WHERE CONSTRAINT_SCHEMA = DATABASE()
-       AND TABLE_NAME = 'nhan_vien'
-       AND CONSTRAINT_NAME = 'chk_nhan_vien_ngay_lam_viec') = 0,
-    'ALTER TABLE nhan_vien ADD CONSTRAINT chk_nhan_vien_ngay_lam_viec CHECK (ngay_nghi_viec IS NULL OR ngay_nghi_viec >= ngay_vao_lam)',
-    'SELECT 1'
-);
-PREPARE stmt FROM @add_check_ngay_lam;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-
-
-
-
-
+-- Cấu trúc dùng bởi form nhân viên đã được khai báo đầy đủ ngay trong
+-- CREATE TABLE nhan_vien, nên bản khởi tạo mới không cần chạy ALTER TABLE.
 -- 3. Thêm dữ liệu mẫu cho bảng Người dùng / Tài khoản (nguoi_dung)
 INSERT INTO nguoi_dung (id, ten_dang_nhap, mat_khau, ho_ten, email, vai_tro, trang_thai) VALUES
-(1,   'admin',   '123456', 'Quản Trị Viên Hệ Thống', 'admin@company.com',   'Admin',       1),
 (101, 'NS001',    '123456', 'Nguyễn Thị Hoa',         'hoants@company.com',  'TruongPhong', 1),
 (102, 'KT001',    '123456', 'Trần Văn Minh',          'minhkt@company.com',  'NhanVien',    1),
 (103, 'KD001',    '123456', 'Lê Hoàng Long',          'longkd@company.com',  'NhanVien',    1),
@@ -241,3 +154,4 @@ ON DUPLICATE KEY UPDATE
     ngay_nghi_viec = new_nv.ngay_nghi_viec;
 
 SELECT * FROM nhan_vien;
+SELECT * FROM nguoi_dung;

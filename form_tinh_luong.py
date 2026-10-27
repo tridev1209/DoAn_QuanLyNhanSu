@@ -12,6 +12,7 @@ from user_error import show_database_error, show_file_error
 
 class PayrollManagementForm:
 
+    STATUS_RESIGNED = "\u0110\u00e3 ngh\u1ec9 vi\u1ec7c"
     STANDARD_WORK_DAYS = 24
     HOURS_PER_DAY = 8
     OT_RATE = 1.5
@@ -41,6 +42,7 @@ class PayrollManagementForm:
 
         self.user_ma_phong_ban = None
         self.user_actual_ma_nv = None
+        self.selected_payroll_key = None
 
         # Biến giao diện
         self.var_ma_nv = tk.StringVar()
@@ -417,10 +419,10 @@ class PayrollManagementForm:
         btn_sub_frame.pack(side=tk.LEFT)
 
         if self.role != "NhanVien":
-            # 1. Nút Lưu / Cập nhật (Được đưa lên đầu làm nút chính)
+            # Tách thao tác tạo phiếu mới và cập nhật phiếu đang chọn.
             icon_button(
                 btn_sub_frame,
-                text="Lưu / Cập nhật",
+                text="Tạo phiếu",
                 icon="save",
                 bg="#2563eb",
                 fg="white",
@@ -428,13 +430,26 @@ class PayrollManagementForm:
                 pady=5,
                 bd=0,
                 cursor="hand2",
-                command=self.luu_bang_luong,
+                command=lambda: self.luu_bang_luong(update_existing=False),
+            ).pack(side=tk.LEFT, padx=3)
+
+            icon_button(
+                btn_sub_frame,
+                text="Cập nhật phiếu",
+                icon="edit",
+                bg="#0f766e",
+                fg="white",
+                padx=10,
+                pady=5,
+                bd=0,
+                cursor="hand2",
+                command=lambda: self.luu_bang_luong(update_existing=True),
             ).pack(side=tk.LEFT, padx=3)
 
             # 2. Nút Xóa
             icon_button(
                 btn_sub_frame,
-                text="Xóa",
+                text="Xóa phiếu",
                 icon="delete",
                 bg="#ef4444",
                 fg="white",
@@ -551,7 +566,7 @@ class PayrollManagementForm:
             ).pack(side=tk.LEFT, padx=2)
             tk.Button(
                 search_sub_frame,
-                text="Tất cả",
+                text="Xóa tìm kiếm",
                 font=("Helvetica", 10),
                 bg="#64748b",
                 fg="white",
@@ -1347,7 +1362,7 @@ class PayrollManagementForm:
         except (ValueError, tk.TclError):
             return 0.0, 0.0
 
-    def luu_bang_luong(self):
+    def luu_bang_luong(self, update_existing=False):
         ma_nv = self.get_selected_ma_nv()
         try:
             thang = int(self.var_thang.get() or 0)
@@ -1391,6 +1406,21 @@ class PayrollManagementForm:
                 f"Năm phải từ {self.MIN_PAYROLL_YEAR} đến {current_year}!",
             )
             return
+
+        if update_existing:
+            current_key = (ma_nv, thang, nam)
+            if self.selected_payroll_key is None:
+                messagebox.showwarning(
+                    "C\u1ea7n ch\u1ecdn phi\u1ebfu",
+                    "H\u00e3y ch\u1ecdn m\u1ed9t phi\u1ebfu l\u01b0\u01a1ng trong b\u1ea3ng tr\u01b0\u1edbc khi c\u1eadp nh\u1eadt.",
+                )
+                return
+            if current_key != self.selected_payroll_key:
+                messagebox.showwarning(
+                    "Phi\u1ebfu kh\u00f4ng kh\u1edbp",
+                    "Nh\u00e2n vi\u00ean v\u00e0 th\u00e1ng/n\u0103m ph\u1ea3i tr\u00f9ng v\u1edbi phi\u1ebfu \u0111ang ch\u1ecdn. H\u00e3y ch\u1ecdn l\u1ea1i phi\u1ebfu ho\u1eb7c b\u1ea5m L\u00e0m m\u1edbi.",
+                )
+                return
 
         ngay_cong = int(self.parse_money(self.var_ngay_cong.get()))
         if not (0 <= ngay_cong <= self.STANDARD_WORK_DAYS):
@@ -1454,6 +1484,12 @@ class PayrollManagementForm:
             existing_row = cursor.fetchone()
 
             if existing_row:
+                if not update_existing:
+                    messagebox.showwarning(
+                        "Phi\u1ebfu l\u01b0\u01a1ng \u0111\u00e3 t\u1ed3n t\u1ea1i",
+                        "K\u1ef3 l\u01b0\u01a1ng n\u00e0y \u0111\u00e3 c\u00f3 phi\u1ebfu. H\u00e3y ch\u1ecdn phi\u1ebfu trong b\u1ea3ng v\u00e0 d\u00f9ng C\u1eadp nh\u1eadt phi\u1ebfu.",
+                    )
+                    return
                 cursor.execute(
                     """
                     UPDATE bang_luong
@@ -1464,8 +1500,14 @@ class PayrollManagementForm:
                     """,
                     values + (existing_row[0],),
                 )
-                action = "cập nhật"
+                action = "c\u1eadp nh\u1eadt"
             else:
+                if update_existing:
+                    messagebox.showwarning(
+                        "Kh\u00f4ng t\u00ecm th\u1ea5y phi\u1ebfu",
+                        "Phi\u1ebfu \u0111ang ch\u1ecdn kh\u00f4ng c\u00f2n t\u1ed3n t\u1ea1i. H\u00e3y t\u1ea3i l\u1ea1i danh s\u00e1ch.",
+                    )
+                    return
                 cursor.execute(
                     """
                     INSERT INTO bang_luong
@@ -1475,13 +1517,14 @@ class PayrollManagementForm:
                     """,
                     (ma_nv, thang, nam) + values,
                 )
-                action = "lưu"
+                action = "l\u01b0u"
             conn.commit()
             messagebox.showinfo(
                 "Thành công",
                 f"Đã {action} bảng lương tháng {thang}/{nam} cho nhân viên"
                 f" {self.var_ten_nv.get()} ({ma_nv})!",
             )
+            self.selected_payroll_key = None
             self.load_data()
         except Error as e:
             conn.rollback()
@@ -1552,16 +1595,36 @@ class PayrollManagementForm:
             return
 
         now = datetime.datetime.now()
-        if self.role == "NhanVien":
-            ma_nv = self.user_actual_ma_nv or self.user_login_name or "nhan_vien"
-            nam = self.var_filter_nam.get().strip() or str(now.year)
-            thang = self.var_filter_thang.get().strip()
-            period_suffix = (
-                f"_{int(thang):02d}" if thang.isdigit() else "_tat_ca"
+        exported_periods = set()
+        exported_employees = set()
+        for item in items:
+            values = self.tree.item(item, "values")
+            month, year = self.split_payroll_period(values[2])
+            if isinstance(month, int) and isinstance(year, int):
+                exported_periods.add((year, month))
+            if values[0]:
+                exported_employees.add(str(values[0]))
+
+        filename_parts = ["bang_luong"]
+        if len(exported_employees) == 1:
+            employee_code = next(iter(exported_employees))
+            safe_employee_code = re.sub(r"[^A-Za-z0-9_-]", "", employee_code)
+            if safe_employee_code:
+                filename_parts.append(safe_employee_code)
+
+        sorted_periods = sorted(exported_periods)
+        if len(sorted_periods) == 1:
+            year, month = sorted_periods[0]
+            filename_parts.append(f"{year}_{month:02d}")
+        elif sorted_periods:
+            first_year, first_month = sorted_periods[0]
+            last_year, last_month = sorted_periods[-1]
+            filename_parts.append(
+                f"tu_{first_year}_{first_month:02d}_den_{last_year}_{last_month:02d}"
             )
-            initial_filename = f"bang_luong_{ma_nv}_{nam}{period_suffix}.xlsx"
         else:
-            initial_filename = f"bang_luong_{now:%Y_%m}.xlsx"
+            filename_parts.append(f"{now:%Y_%m}")
+        initial_filename = "_".join(filename_parts) + ".xlsx"
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -1823,20 +1886,28 @@ class PayrollManagementForm:
                     query += " AND bl.nam = %s"
                     params.append(int(nam_flt))
 
-                query += " ORDER BY bl.nam DESC, bl.thang DESC"
+                query += " ORDER BY bl.nam DESC, bl.thang DESC, bl.ma_nv ASC"
                 cursor.execute(query, tuple(params))
 
-            elif self.role == "TruongPhong" and self.user_ma_phong_ban:
+            elif self.role == "TruongPhong":
+                if not self.user_ma_phong_ban:
+                    self.refresh_table(
+                        [],
+                        "Kh\u00f4ng x\u00e1c \u0111\u1ecbnh \u0111\u01b0\u1ee3c ph\u00f2ng ban c\u1ee7a Tr\u01b0\u1edfng ph\u00f2ng.",
+                    )
+                    return
                 query = """
                     SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb,
                            bl.ngay_cong, bl.gio_ot, bl.luong_ot, bl.phu_cap,
                            bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
-                    WHERE nv.ma_phong_ban = %s AND trang_thai <> 'Đã nghỉ việc'
+                    WHERE nv.ma_phong_ban = %s AND nv.trang_thai <> %s
                     ORDER BY bl.nam DESC, bl.thang DESC, bl.ma_nv ASC
                 """
-                cursor.execute(query, (self.user_ma_phong_ban,))
+                cursor.execute(
+                    query, (self.user_ma_phong_ban, self.STATUS_RESIGNED)
+                )
 
             else:
                 query = """
@@ -1911,6 +1982,13 @@ class PayrollManagementForm:
             self.load_data()
             return
 
+        if self.role == "TruongPhong" and not self.user_ma_phong_ban:
+            self.refresh_table(
+                [],
+                "Kh\u00f4ng x\u00e1c \u0111\u1ecbnh \u0111\u01b0\u1ee3c ph\u00f2ng ban c\u1ee7a Tr\u01b0\u1edfng ph\u00f2ng.",
+            )
+            return
+
         conn = get_db_connection()
         if not conn:
             return
@@ -1924,9 +2002,16 @@ class PayrollManagementForm:
                            bl.khoan_tru, bl.thuc_nhan
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
-                    WHERE nv.ma_phong_ban = %s AND (bl.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR CONCAT(bl.thang, '/', bl.nam) LIKE %s) 
+                    WHERE nv.ma_phong_ban = %s
+                      AND nv.trang_thai <> %s
+                      AND (bl.ma_nv LIKE %s OR nv.ho_ten LIKE %s
+                           OR CONCAT(bl.thang, '/', bl.nam) LIKE %s)
+                    ORDER BY bl.nam DESC, bl.thang DESC, bl.ma_nv ASC
                 """
-                cursor.execute(query, (self.user_ma_phong_ban, p, p, p))
+                cursor.execute(
+                    query,
+                    (self.user_ma_phong_ban, self.STATUS_RESIGNED, p, p, p),
+                )
             else:
                 query = """
                     SELECT bl.ma_nv, nv.ho_ten, bl.thang, bl.nam, bl.luong_cb,
@@ -1935,6 +2020,7 @@ class PayrollManagementForm:
                     FROM bang_luong bl
                     LEFT JOIN nhan_vien nv ON bl.ma_nv = nv.ma_nv
                     WHERE bl.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR CONCAT(bl.thang, '/', bl.nam) LIKE %s
+                    ORDER BY bl.nam DESC, bl.thang DESC, bl.ma_nv ASC
                 """
                 cursor.execute(query, (p, p, p))
 
@@ -1947,6 +2033,7 @@ class PayrollManagementForm:
             conn.close()
 
     def lam_moi(self):
+        self.selected_payroll_key = None
         self.var_thang.set(str(datetime.datetime.now().month))
         self.var_nam.set(str(datetime.datetime.now().year))
         self.var_ngay_cong.set(str(self.STANDARD_WORK_DAYS))
@@ -1994,6 +2081,7 @@ class PayrollManagementForm:
         selected = self.tree.selection()
         if not selected:
             return
+        self.selected_payroll_key = None
         vals = self.tree.item(selected, "values")
         row_data = dict(zip(self.columns_def, vals))
 
@@ -2008,6 +2096,10 @@ class PayrollManagementForm:
             )
             return
 
+        period_parts = row_data["thang_nam"].split("/")
+        self.selected_payroll_key = (
+            row_data["ma_nv"], int(period_parts[0]), int(period_parts[1])
+        )
         display_str = f"{row_data['ma_nv']} - {row_data['ten_nv']}"
         self.var_ma_nv.set(display_str)
         self.var_ten_nv.set(row_data["ten_nv"])

@@ -56,6 +56,7 @@ class EmployeeManagementForm:
         self.var_luong_cb = tk.StringVar(value="12.000.000")
         self.var_trang_thai = tk.StringVar(value=STATUS_WORKING)
         self.var_tim_kiem = tk.StringVar()
+        self.employee_list_mode = "active"
 
         self.dict_phong_ban = {}
         self.dict_tien_to = {}
@@ -884,7 +885,7 @@ class EmployeeManagementForm:
         ).pack(side=tk.LEFT, padx=2)
         self.btn_tat_ca = tk.Button(
             search_sub_frame,
-            text="Tất cả",
+            text="Xóa tìm kiếm",
             font=("Helvetica", 10),
             bg="#64748b",
             fg="white",
@@ -895,7 +896,37 @@ class EmployeeManagementForm:
         )
         self.btn_tat_ca.pack(side=tk.LEFT, padx=2)
 
-        # --- BẢNG HIỂN THỊ DỮ LIỆU ---
+        # Filter employee records by employment status.
+        filter_frame = tk.Frame(self.parent, bg="#f8fafc")
+        filter_frame.pack(fill=tk.X, pady=(4, 0))
+        tk.Label(
+            filter_frame,
+            text="Danh s\u00e1ch:",
+            bg="#f8fafc",
+            fg="#475569",
+            font=("Helvetica", 10, "bold"),
+        ).pack(side=tk.LEFT, padx=(2, 8))
+        self.employee_filter_buttons = {}
+        for mode, label in (
+            ("active", "\u0110ang l\u00e0m vi\u1ec7c"),
+            ("resigned", "\u0110\u00e3 ngh\u1ec9 vi\u1ec7c"),
+            ("all", "T\u1ea5t c\u1ea3 h\u1ed3 s\u01a1"),
+        ):
+            button = tk.Button(
+                filter_frame,
+                text=label,
+                font=("Helvetica", 9, "bold"),
+                padx=10,
+                pady=4,
+                bd=0,
+                cursor="hand2",
+                command=lambda value=mode: self.set_employee_list_mode(value),
+            )
+            button.pack(side=tk.LEFT, padx=3)
+            self.employee_filter_buttons[mode] = button
+        self.update_employee_filter_buttons()
+
+        # --- BANG HIEN THI DU LIEU ---
         table_frame = tk.Frame(self.parent)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=4)
 
@@ -994,6 +1025,7 @@ class EmployeeManagementForm:
         scrollbar_x = ttk.Scrollbar(
             table_frame, orient=tk.HORIZONTAL, command=self.tree.xview
         )
+        self.tree.tag_configure("resigned", foreground="#9a3412", background="#fff7ed")
         self.tree.configure(
             yscroll=scrollbar.set,
             xscroll=scrollbar_x.set,
@@ -1036,6 +1068,22 @@ class EmployeeManagementForm:
     def on_search_enter(self, event=None):
         self.tim_kiem()
         return "break"
+
+    def update_employee_filter_buttons(self):
+        for mode, button in self.employee_filter_buttons.items():
+            selected = mode == self.employee_list_mode
+            button.config(
+                bg="#0f766e" if selected else "#e2e8f0",
+                fg="white" if selected else "#334155",
+                activebackground="#0d9488" if selected else "#cbd5e1",
+            )
+
+    def set_employee_list_mode(self, mode):
+        if mode not in ("active", "resigned", "all"):
+            return
+        self.employee_list_mode = mode
+        self.update_employee_filter_buttons()
+        self.load_data(reset_search=False)
 
     def show_all_employees(self):
         self.var_tim_kiem.set("")
@@ -1603,7 +1651,7 @@ class EmployeeManagementForm:
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
                     LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
                     WHERE nv.ma_phong_ban = %s
-                    ORDER BY nv.ma_nv ASC
+                    ORDER BY pb.ten_phong_ban ASC, nv.trang_thai ASC, nv.ho_ten ASC, nv.ma_nv ASC
                 """
                 cursor.execute(query, (self.user_ma_phong_ban,))
             else:
@@ -1614,7 +1662,7 @@ class EmployeeManagementForm:
                     FROM nhan_vien nv
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
                     LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
-                    ORDER BY nv.ma_nv ASC
+                    ORDER BY pb.ten_phong_ban ASC, nv.trang_thai ASC, nv.ho_ten ASC, nv.ma_nv ASC
                 """
                 cursor.execute(query)
 
@@ -1630,8 +1678,18 @@ class EmployeeManagementForm:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        if not data_list and empty_message:
-            self.empty_result_label.config(text=empty_message)
+        if self.employee_list_mode == "active":
+            data_list = [row for row in data_list if row["trang_thai"] != STATUS_RESIGNED]
+        elif self.employee_list_mode == "resigned":
+            data_list = [row for row in data_list if row["trang_thai"] == STATUS_RESIGNED]
+
+        if not data_list:
+            message = empty_message or {
+                "active": "Kh\u00f4ng c\u00f3 nh\u00e2n vi\u00ean \u0111ang l\u00e0m vi\u1ec7c.",
+                "resigned": "Kh\u00f4ng c\u00f3 h\u1ed3 s\u01a1 nh\u00e2n vi\u00ean \u0111\u00e3 ngh\u1ec9 vi\u1ec7c.",
+                "all": "Ch\u01b0a c\u00f3 h\u1ed3 s\u01a1 nh\u00e2n vi\u00ean.",
+            }[self.employee_list_mode]
+            self.empty_result_label.config(text=message)
             self.empty_result_label.place(relx=0.5, rely=0.5, anchor="center")
             self.empty_result_label.lift()
         else:
@@ -1655,6 +1713,7 @@ class EmployeeManagementForm:
             self.tree.insert(
                 "",
                 tk.END,
+                tags=("resigned",) if row["trang_thai"] == STATUS_RESIGNED else (),
                 values=(
                     row["ma_nv"],
                     row["ho_ten"],
@@ -2385,7 +2444,7 @@ class EmployeeManagementForm:
                     LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
                     WHERE nv.ma_phong_ban = %s
                       AND (nv.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR nv.sdt LIKE %s)
-                    ORDER BY nv.ma_nv ASC
+                    ORDER BY pb.ten_phong_ban ASC, nv.trang_thai ASC, nv.ho_ten ASC, nv.ma_nv ASC
                 """
                 cursor.execute(query, (self.user_ma_phong_ban, p, p, p))
             else:
@@ -2397,7 +2456,7 @@ class EmployeeManagementForm:
                     LEFT JOIN phong_ban pb ON nv.ma_phong_ban = pb.ma_phong_ban
                     LEFT JOIN chuc_vu cv ON nv.ma_chuc_vu = cv.ma_chuc_vu
                     WHERE nv.ma_nv LIKE %s OR nv.ho_ten LIKE %s OR nv.sdt LIKE %s
-                    ORDER BY nv.ma_nv ASC
+                    ORDER BY pb.ten_phong_ban ASC, nv.trang_thai ASC, nv.ho_ten ASC, nv.ma_nv ASC
                 """
                 cursor.execute(query, (p, p, p))
 
