@@ -1,2 +1,2 @@
-﻿# Object detection using mediapipe
+﻿# DoAn_QuanLyNhanSu
 # DoAn_QuanLyNhanSu
